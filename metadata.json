@@ -1,0 +1,6 @@
+{
+  "name": "AAMARVA MCP Gateway",
+  "description": "Authorization-aware MCP pass-through proxy connecting independently operated MCP servers to AAMARVA agent identity and authorization infrastructure.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
