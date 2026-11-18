@@ -19,6 +19,7 @@ export const GatewayConfigSchema = z
       ),
     }),
     aamarva: z.object({
+      adapterEnabled: z.boolean().default(true),
       baseUrl: z.string().url(),
       backendAuthSecret: z.string().min(16),
       trustedSigningKeys: z.record(z.string().min(1), z.string().min(32)),

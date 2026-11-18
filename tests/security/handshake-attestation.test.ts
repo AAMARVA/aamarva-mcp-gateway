@@ -205,14 +205,20 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
-  const agentKeysA = crypto.generateKeyPairSync('x25519', {
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-  });
-  const agentKeysB = crypto.generateKeyPairSync('x25519', {
-    publicKeyEncoding: { type: 'spki', format: 'pem' },
-    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-  });
+  function makeP256AgentKeys() {
+    const pair = crypto.generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1',
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    const der = crypto.createPublicKey(pair.publicKey).export({ type: 'spki', format: 'der' }) as Buffer;
+    return {
+      ...pair,
+      fingerprint: `sha256:${sha256Hex(der)}`,
+    };
+  }
+  const agentKeysA = makeP256AgentKeys();
+  const agentKeysB = makeP256AgentKeys();
 
   function signBackendHeaders(gw: AamarvaMcpGateway, reqPath: string, body: unknown) {
     const rawBody = JSON.stringify(body);
@@ -389,9 +395,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
 
     const res = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       body,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', body),
+      signBackendHeaders(gateway, '/handshake', body),
     );
 
     expect(res.status).toBe(200);
@@ -456,16 +462,16 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
 
   it('7-8: rejects invalid challenges, expired challenges, bad signatures, spoofed verified flags, and challenge replay', async () => {
     // Missing backend HMAC -> 401
-    const unauth = await postJson(baseUrl, '/api/v1/aamarva/mcp/handshake', {});
+    const unauth = await postJson(baseUrl, '/handshake', {});
     expect(unauth.status).toBe(401);
 
     // Short / whitespace challenge -> 400
     const badChallengeBody = buildSignedHandshake({ challenge: 'short bad' });
     const badChallengeRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       badChallengeBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', badChallengeBody),
+      signBackendHeaders(gateway, '/handshake', badChallengeBody),
     );
     expect(badChallengeRes.status).toBe(400);
     expect(badChallengeRes.json.verified).toBe(false);
@@ -475,9 +481,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     const spoofedBody = { ...validBase, verified: true };
     const spoofedRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       spoofedBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', spoofedBody),
+      signBackendHeaders(gateway, '/handshake', spoofedBody),
     );
     expect(spoofedRes.status).toBe(400);
     expect(spoofedRes.json.verified).toBe(false);
@@ -489,9 +495,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const expiredRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       expiredBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', expiredBody),
+      signBackendHeaders(gateway, '/handshake', expiredBody),
     );
     expect(expiredRes.status).toBe(401);
     expect(expiredRes.json.error).toBe('HANDSHAKE_CHALLENGE_EXPIRED');
@@ -503,9 +509,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     };
     const badSigRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       badSigBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', badSigBody),
+      signBackendHeaders(gateway, '/handshake', badSigBody),
     );
     expect(badSigRes.status).toBe(401);
     expect(badSigRes.json.error).toBe('INVALID_AAMARVA_SIGNATURE');
@@ -530,17 +536,17 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const firstRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       firstBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', firstBody),
+      signBackendHeaders(gateway, '/handshake', firstBody),
     );
     expect(firstRes.status).toBe(200);
 
     const secondRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       firstBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', firstBody),
+      signBackendHeaders(gateway, '/handshake', firstBody),
     );
     expect(secondRes.status).toBe(409);
     expect(secondRes.json.verified).toBe(false);
@@ -567,9 +573,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const wrongAuthRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       badCredsBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', badCredsBody),
+      signBackendHeaders(gateway, '/handshake', badCredsBody),
     );
     expect(wrongAuthRes.status).toBe(502);
     expect(wrongAuthRes.json.verified).toBe(false);
@@ -589,9 +595,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const unreachRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       unreachableBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', unreachableBody),
+      signBackendHeaders(gateway, '/handshake', unreachableBody),
     );
     expect(unreachRes.status).toBe(502);
     expect(unreachRes.json.verified).toBe(false);
@@ -606,9 +612,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const brokenRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       brokenBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', brokenBody),
+      signBackendHeaders(gateway, '/handshake', brokenBody),
     );
     expect(brokenRes.status).toBe(502);
     expect(brokenRes.json.verified).toBe(false);
@@ -626,9 +632,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const substHsRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       substHsBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', substHsBody),
+      signBackendHeaders(gateway, '/handshake', substHsBody),
     );
     expect(substHsRes.status).toBe(403);
     expect(substHsRes.json.error).toBe('ENDPOINT_MISMATCH');
@@ -657,9 +663,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const hsResA = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       hsBodyA,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', hsBodyA),
+      signBackendHeaders(gateway, '/handshake', hsBodyA),
     );
     expect(hsResA.status).toBe(200);
     const attA = hsResA.json.attestation as GatewayVerificationAttestation;
@@ -682,9 +688,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const hsResB = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       hsBodyB,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', hsBodyB),
+      signBackendHeaders(gateway, '/handshake', hsBodyB),
     );
     expect(hsResB.status).toBe(200);
     const attB = hsResB.json.attestation as GatewayVerificationAttestation;
@@ -703,6 +709,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       agentName: 'Agent B',
       accountId: 'acct_B',
       agentPublicKeyPem: agentKeysB.publicKey,
+      agentPublicKeyFingerprint: agentKeysB.fingerprint,
       mcpServerId: 'mcp_srv_A',
       gatewayId: 'gw_hs_01',
       integrationId: 'int_A',
@@ -718,9 +725,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     };
     const crossAcctRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/authorizations/issue-token',
+      '/issuetoken',
       crossAcctBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/issue-token', crossAcctBody),
+      signBackendHeaders(gateway, '/issuetoken', crossAcctBody),
     );
     expect(crossAcctRes.status).toBe(403);
     expect(crossAcctRes.json.error).toBe('ACCOUNT_MISMATCH');
@@ -732,6 +739,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       agentName: 'Agent A',
       accountId: 'acct_A',
       agentPublicKeyPem: agentKeysA.publicKey,
+      agentPublicKeyFingerprint: agentKeysA.fingerprint,
       mcpServerId: 'mcp_srv_A',
       gatewayId: 'gw_hs_01',
       integrationId: 'int_A',
@@ -748,9 +756,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     };
     const substGrantRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/authorizations/issue-token',
+      '/issuetoken',
       substGrantBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/issue-token', substGrantBody),
+      signBackendHeaders(gateway, '/issuetoken', substGrantBody),
     );
     expect(substGrantRes.status).toBe(403);
     expect(substGrantRes.json.error).toBe('ENDPOINT_MISMATCH');
@@ -759,7 +767,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     async function establishSession(opts: {
       accountId: string;
       agentId: string;
-      agentKeys: { publicKey: string; privateKey: string };
+      agentKeys: { publicKey: string; privateKey: string; fingerprint: string };
       att: GatewayVerificationAttestation;
     }): Promise<string> {
       const t = Date.now();
@@ -769,6 +777,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
         agentName: opts.agentId,
         accountId: opts.accountId,
         agentPublicKeyPem: opts.agentKeys.publicKey,
+        agentPublicKeyFingerprint: opts.agentKeys.fingerprint,
         mcpServerId: opts.att.mcpServerId,
         gatewayId: 'gw_hs_01',
         integrationId: opts.att.integrationId,
@@ -785,26 +794,18 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       };
       const issueRes = await postJson(
         baseUrl,
-        '/api/v1/aamarva/authorizations/issue-token',
+        '/issuetoken',
         reqBody,
-        signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/issue-token', reqBody),
+        signBackendHeaders(gateway, '/issuetoken', reqBody),
       );
       expect(issueRes.status).toBe(201);
 
       const gwPub = issueRes.json.gatewayPublicKey as GatewayPublicKeyMetadata;
-      const gwSig = issueRes.json.gatewaySignature as { signature: string };
+      const { gatewaySignature: gwSigRaw, ...unsignedIssuePayload } = issueRes.json;
+      const gwSig = gwSigRaw as { signature: string };
       expect(
         verifyGatewayResponseSignature({
-          payload: {
-            tokenId: issueRes.json.tokenId,
-            expiresAt: issueRes.json.expiresAt,
-            gatewayId: issueRes.json.gatewayId,
-            mcpServerId: issueRes.json.mcpServerId,
-            redemptionEndpoint: issueRes.json.redemptionEndpoint,
-            encryptedToken: issueRes.json.encryptedToken,
-            gatewayPublicKey: gwPub,
-            correlationId: issueRes.json.correlationId,
-          },
+          payload: unsignedIssuePayload,
           signatureBase64: gwSig.signature,
           gatewayPublicKey: gwPub,
         }),
@@ -814,7 +815,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
         issueRes.json.encryptedToken as EncryptedTokenEnvelope,
         opts.agentKeys.privateKey,
       );
-      const redeemRes = await postJson(baseUrl, '/api/v1/redeem', {
+      const redeemRes = await postJson(baseUrl, '/execute', {
         token: dec.token,
         agentId: opts.agentId,
         accountId: opts.accountId,
@@ -838,8 +839,18 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       att: attB,
     });
 
-    // Item 11 & 13: tools/list & tools/call route cleanly to each account's own verified external MCP server
-    const listBodyA = {
+    // Legacy HTTP relay routes are removed and return 404
+    for (const removedRoute of [
+      '/api/v1/aamarva/mcp/tools/list',
+      '/api/v1/aamarva/mcp/tools/call',
+      '/api/v1/aamarva/authorizations/revoke',
+    ]) {
+      const r404 = await postJson(baseUrl, removedRoute, {});
+      expect(r404.status).toBe(404);
+    }
+
+    // Item 11 & 13: internal Gateway tools/list & tools/call route cleanly to each account's own verified external MCP server
+    const listResA = await gateway.executionProxy.listAuthorizedTools({
       requestId: `req_list_a_${crypto.randomBytes(6).toString('hex')}`,
       sessionId: sessA,
       agentId: 'agent_A',
@@ -849,16 +860,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       connectionId: attA.connectionId,
       integrationId: 'int_A',
       expectedEndpoint: mcpServerA.url,
-      timestamp: new Date().toISOString(),
-    };
-    const listResA = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/list',
-      listBodyA,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/list', listBodyA),
-    );
-    expect(listResA.status).toBe(200);
-    expect((listResA.json.tools as Array<{ name: string }>).map((t) => t.name)).toEqual([
+    });
+    expect(listResA.statusCode).toBe(200);
+    expect((listResA.body.tools as Array<{ name: string }>).map((t) => t.name)).toEqual([
       'tenant_whoami',
       'inventory_lookup',
     ]);
@@ -873,17 +877,11 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       connectionId: attA.connectionId,
       toolName: 'tenant_whoami',
       arguments: {},
-      timestamp: new Date().toISOString(),
     };
-    const callResA = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      callBodyA,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', callBodyA),
-    );
-    expect(callResA.status).toBe(200);
+    const callResA = await gateway.executionProxy.executeAuthorizedTool(callBodyA);
+    expect(callResA.statusCode).toBe(200);
     const whoA = JSON.parse(
-      ((callResA.json.result as { content: Array<{ text: string }> }).content[0]).text,
+      ((callResA.body.result as { content: Array<{ text: string }> }).content[0]).text,
     );
     expect(whoA).toEqual({ serverName: 'ext-warehouse-alpha', tenantTag: 'tenant-alpha' });
 
@@ -897,64 +895,40 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       connectionId: attB.connectionId,
       toolName: 'tenant_whoami',
       arguments: {},
-      timestamp: new Date().toISOString(),
     };
-    const callResB = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      callBodyB,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', callBodyB),
-    );
-    expect(callResB.status).toBe(200);
+    const callResB = await gateway.executionProxy.executeAuthorizedTool(callBodyB);
+    expect(callResB.statusCode).toBe(200);
     const whoB = JSON.parse(
-      ((callResB.json.result as { content: Array<{ text: string }> }).content[0]).text,
+      ((callResB.body.result as { content: Array<{ text: string }> }).content[0]).text,
     );
     expect(whoB).toEqual({ serverName: 'ext-warehouse-beta', tenantTag: 'tenant-beta' });
 
     // Unauthorized tool blocked 403
-    const deniedToolBody = {
+    const deniedToolRes = await gateway.executionProxy.executeAuthorizedTool({
       ...callBodyA,
       requestId: `req_deny_${crypto.randomBytes(6).toString('hex')}`,
       toolName: 'restricted_admin_wipe',
-    };
-    const deniedToolRes = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      deniedToolBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', deniedToolBody),
-    );
-    expect(deniedToolRes.status).toBe(403);
-    expect(deniedToolRes.json.error).toBe('TOOL_NOT_AUTHORIZED');
+    });
+    expect(deniedToolRes.statusCode).toBe(403);
+    expect(deniedToolRes.body.error).toBe('TOOL_NOT_AUTHORIZED');
 
     // Item 9: Session substitution (Account A's sessionId with Account B's connectionId) blocked 403
-    const sessSubBody = {
+    const sessSubRes = await gateway.executionProxy.executeAuthorizedTool({
       ...callBodyA,
       requestId: `req_sess_sub_${crypto.randomBytes(6).toString('hex')}`,
       connectionId: attB.connectionId,
-    };
-    const sessSubRes = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      sessSubBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', sessSubBody),
-    );
-    expect(sessSubRes.status).toBe(403);
-    expect(sessSubRes.json.error).toBe('SESSION_SUBSTITUTION_BLOCKED');
+    });
+    expect(sessSubRes.statusCode).toBe(403);
+    expect(sessSubRes.body.error).toBe('SESSION_SUBSTITUTION_BLOCKED');
 
     // Item 9: Endpoint substitution in relay payload blocked 403
-    const epSubBody = {
+    const epSubRes = await gateway.executionProxy.executeAuthorizedTool({
       ...callBodyA,
       requestId: `req_ep_sub_${crypto.randomBytes(6).toString('hex')}`,
       expectedEndpoint: mcpServerB.url,
-    };
-    const epSubRes = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      epSubBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', epSubBody),
-    );
-    expect(epSubRes.status).toBe(403);
-    expect(epSubRes.json.error).toBe('ENDPOINT_MISMATCH');
+    });
+    expect(epSubRes.statusCode).toBe(403);
+    expect(epSubRes.body.error).toBe('ENDPOINT_MISMATCH');
 
     // Simulate Gateway restart against same SQLite DB: empty in-memory pool must reconnect using AES-256-GCM stored credentials!
     const restartedGateway = new AamarvaMcpGateway(config, {
@@ -962,28 +936,17 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       silentLogger: true,
     });
     await restartedGateway.start({ connectMcpOnBoot: false });
-    const restartedApp = restartedGateway.createStandaloneApp();
-    const restartedServer = restartedApp.listen(0, '127.0.0.1');
-    await new Promise<void>((resolve) => restartedServer.once('listening', resolve));
-    const rAddr = restartedServer.address();
-    const restartedUrl = `http://127.0.0.1:${typeof rAddr === 'object' && rAddr ? rAddr.port : 0}`;
 
     try {
-      const postRestartCall = {
+      const postRestartRes = await restartedGateway.executionProxy.executeAuthorizedTool({
         ...callBodyA,
         requestId: `req_restart_${crypto.randomBytes(6).toString('hex')}`,
         toolName: 'inventory_lookup',
         arguments: { sku: 'SKU-RESTART-101' },
-      };
-      const postRestartRes = await postJson(
-        restartedUrl,
-        '/api/v1/aamarva/mcp/tools/call',
-        postRestartCall,
-        signBackendHeaders(restartedGateway, '/api/v1/aamarva/mcp/tools/call', postRestartCall),
-      );
-      expect(postRestartRes.status).toBe(200);
+      });
+      expect(postRestartRes.statusCode).toBe(200);
       const parsedRestart = JSON.parse(
-        ((postRestartRes.json.result as { content: Array<{ text: string }> }).content[0]).text,
+        ((postRestartRes.body.result as { content: Array<{ text: string }> }).content[0]).text,
       );
       expect(parsedRestart).toEqual({
         tenantTag: 'tenant-alpha',
@@ -996,7 +959,6 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       expect(restartedLogs).not.toContain(secretA);
       expect(restartedLogs).not.toContain(customValA);
     } finally {
-      await new Promise<void>((resolve) => restartedServer.close(() => resolve()));
       await restartedGateway.stop();
     }
 
@@ -1013,30 +975,19 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       keyId: 'aamarva-k1',
       signature: signPayloadAsMockAamarva(revClaims, aamarvaKeys.privateKey),
     };
-    const revRes = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/authorizations/revoke',
-      revBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/revoke', revBody),
-    );
-    expect(revRes.status).toBe(200);
-    expect(revRes.json.revoked).toBe(true);
+    const revRes = await gateway.authAdapter.processRevocation(revBody, 'corr_hs_rev');
+    expect(revRes.statusCode).toBe(200);
+    expect(revRes.ok).toBe(true);
 
     const revokedConnA = await gateway.store.getVerifiedConnection(attA.connectionId);
     expect(revokedConnA?.status).toBe('revoked');
 
     // Account B's verified connection & session continue working unaffected
-    const postRevCallB = {
+    const postRevResB = await gateway.executionProxy.executeAuthorizedTool({
       ...callBodyB,
       requestId: `req_postrev_b_${crypto.randomBytes(6).toString('hex')}`,
-    };
-    const postRevResB = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      postRevCallB,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', postRevCallB),
-    );
-    expect(postRevResB.status).toBe(200);
+    });
+    expect(postRevResB.statusCode).toBe(200);
   }, 25_000);
 
   it('rejects remote insecure http:// endpoints under TLS, rejects unverified connectionId grants, and verifies STDIO handshake', async () => {
@@ -1049,9 +1000,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const remoteHttpRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       remoteHttpBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', remoteHttpBody),
+      signBackendHeaders(gateway, '/handshake', remoteHttpBody),
     );
     expect(remoteHttpRes.status).toBe(400);
     expect(remoteHttpRes.json.verified).toBe(false);
@@ -1065,6 +1016,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       agentName: 'Agent Unverified',
       accountId: 'acct_unv',
       agentPublicKeyPem: agentKeysA.publicKey,
+      agentPublicKeyFingerprint: agentKeysA.fingerprint,
       mcpServerId: 'mcp_unv',
       gatewayId: 'gw_hs_01',
       integrationId: 'int_unv',
@@ -1080,9 +1032,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     };
     const unverifiedGrantRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/authorizations/issue-token',
+      '/issuetoken',
       unverifiedGrantBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/issue-token', unverifiedGrantBody),
+      signBackendHeaders(gateway, '/issuetoken', unverifiedGrantBody),
     );
     expect(unverifiedGrantRes.status).toBe(403);
     expect(unverifiedGrantRes.json.error).toBe('CONNECTION_NOT_VERIFIED');
@@ -1097,9 +1049,9 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
     });
     const stdioRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       stdioBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', stdioBody),
+      signBackendHeaders(gateway, '/handshake', stdioBody),
     );
     expect(stdioRes.status).toBe(200);
     expect(stdioRes.json.verified).toBe(true);

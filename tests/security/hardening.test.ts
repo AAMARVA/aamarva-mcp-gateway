@@ -210,7 +210,7 @@ describe('Security Hardening: TLS/Proxy, Console Auth, Gateway Identity & Revoca
     const port = (server.address() as { port: number }).port;
 
     try {
-      const resp = await fetch(`http://127.0.0.1:${port}/api/v1/redeem`, {
+      const resp = await fetch(`http://127.0.0.1:${port}/execute`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

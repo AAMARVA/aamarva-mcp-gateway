@@ -134,7 +134,7 @@ describe('One-Time Atomic Token Redemption, Expiration Clamping & Session Sync O
           expiresAt: issued.expiresAt,
           gatewayId: 'gw_test',
           mcpServerId: 'mcp_test',
-          redemptionEndpoint: '/api/v1/redeem',
+          redemptionEndpoint: '/execute',
           encryptedToken: issued.encryptedToken,
           gatewayPublicKey: issued.gatewayPublicKey,
           correlationId: 'corr_1',

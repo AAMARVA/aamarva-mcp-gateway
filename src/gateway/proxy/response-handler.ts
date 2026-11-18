@@ -16,13 +16,14 @@ export class ProxyResponseHandler {
   }
 
   upstreamError(err: unknown, correlationId: string): ProxyHttpResult {
-    const message = err instanceof Error ? err.message : 'Upstream MCP execution failed';
-    const isTimeout = message.toLowerCase().includes('timeout') || message.toLowerCase().includes('abort');
+    const rawMessage = err instanceof Error ? err.message : 'Upstream MCP execution failed';
+    const isTimeout =
+      rawMessage.toLowerCase().includes('timeout') || rawMessage.toLowerCase().includes('abort');
     return {
       statusCode: isTimeout ? 504 : 502,
       body: {
         error: isTimeout ? 'MCP_EXECUTION_TIMEOUT' : 'MCP_UPSTREAM_ERROR',
-        message,
+        message: isTimeout ? 'Upstream MCP request timed out' : 'Upstream MCP execution failed',
         correlationId,
       },
     };

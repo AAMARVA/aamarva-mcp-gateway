@@ -193,7 +193,7 @@ export class RedemptionService {
           expiresAt: envelope.expiresAt,
           gatewayId: this.gatewayId,
           mcpServerId: params.context.mcpServerId,
-          redemptionEndpoint: params.redemptionEndpoint ?? '/api/v1/redeem',
+          redemptionEndpoint: params.redemptionEndpoint ?? '/execute',
           encryptedToken: envelope,
           gatewayPublicKey,
           correlationId: params.correlationId,

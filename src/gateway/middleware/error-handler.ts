@@ -43,7 +43,7 @@ export function createErrorHandlerMiddleware(logger: GatewayLogger) {
 
     res.status(status >= 400 && status < 600 ? status : 500).json({
       error: 'GATEWAY_ERROR',
-      message: status < 500 && err instanceof Error ? err.message : 'Internal Gateway error',
+      message: status < 500 ? 'Request could not be processed' : 'Internal Gateway error',
     });
   };
 }

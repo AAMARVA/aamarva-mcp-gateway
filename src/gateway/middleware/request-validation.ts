@@ -1,4 +1,61 @@
-import type { NextFunction, Request, Response } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
+
+const STRICT_ALLOWED_ADAPTER_PATHS = new Set<string>([
+  '/handshake',
+  '/issuetoken',
+  '/execute',
+]);
+
+const ATTACHED_INGRESS_APPS = new WeakSet<object>();
+
+/**
+ * Extracts the exact raw request pathname before Express path decoding,
+ * dot-segment normalization, or trailing-slash relaxation.
+ */
+export function extractRawRequestPathname(req: Pick<Request, 'originalUrl' | 'url'>): string {
+  const rawUrl = req.originalUrl ?? req.url ?? '';
+  const queryIndex = rawUrl.indexOf('?');
+  return queryIndex === -1 ? rawUrl : rawUrl.slice(0, queryIndex);
+}
+
+/**
+ * Central early-ingress allowlist enforced whenever the AAMARVA Gateway adapter is enabled.
+ * Permits ONLY exact POST /handshake, POST /issuetoken, and POST /execute.
+ * Rejects everything else (including /, /healthz, /readyz, /api/console/*, static/SPA,
+ * trailing slashes, encoded path variations, and unsupported methods) with 404 or 405.
+ */
+export function createStrictAamarvaIngressMiddleware() {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const rawPath = extractRawRequestPathname(req);
+
+    if (!STRICT_ALLOWED_ADAPTER_PATHS.has(rawPath)) {
+      res.status(404).json({
+        error: 'NOT_FOUND',
+        message: 'Endpoint not found',
+      });
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      res.status(405).json({
+        error: 'METHOD_NOT_ALLOWED',
+        message: 'Only POST is supported on this Gateway endpoint',
+      });
+      return;
+    }
+
+    next();
+  };
+}
+
+export function attachStrictAamarvaIngressGuard(app: Express): void {
+  if (ATTACHED_INGRESS_APPS.has(app)) {
+    return;
+  }
+  ATTACHED_INGRESS_APPS.add(app);
+  app.use(createStrictAamarvaIngressMiddleware());
+}
 
 export interface TlsEnforcementOptions {
   requireTls: boolean;

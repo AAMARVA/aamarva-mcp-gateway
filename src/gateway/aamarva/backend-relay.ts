@@ -22,10 +22,9 @@ import {
 
 /**
  * Handles requests arriving strictly from the authenticated AAMARVA Core backend:
- * 0. Initial MCP Verification Handshake (/handshake & /api/v1/aamarva/mcp/handshake)
- * 1. Agent-specific Encrypted Token Issuance (/issuetoken & /api/v1/aamarva/authorizations/issue-token)
- * 2. Revocation webhook from AAMARVA
- * 3. Phase 7: Relayed MCP tools/list and tools/call execution
+ * 0. Initial MCP Verification Handshake (POST /handshake)
+ * 1. Agent-specific Encrypted Token Issuance (POST /issuetoken)
+ * 2. Internal revocation & MCP mediation helpers (not exposed as extra public HTTP routes)
  */
 export class AamarvaBackendRelay {
   private readonly authAdapter: AamarvaAuthorizationAdapter;
@@ -98,7 +97,7 @@ export class AamarvaBackendRelay {
         gatewayPublicKeyFingerprint: response.gatewayPublicKey.fingerprint,
       });
     } catch (err) {
-      if (err instanceof HandshakeVerificationError || err instanceof SsrfBlockedError) {
+      if (err instanceof HandshakeVerificationError) {
         res.status(err.statusCode).json({
           verified: false,
           error: err.code,
@@ -108,13 +107,51 @@ export class AamarvaBackendRelay {
         return;
       }
 
+      if (err instanceof SsrfBlockedError) {
+        this.audit.record({
+          event: 'SSRF_BLOCKED',
+          outcome: 'denied',
+          message: err.message,
+          correlationId: ctx.correlationId,
+          accountId: claims.accountId,
+          mcpServerId: verified.resolvedMcpServerId,
+          details: { code: err.code, statusCode: err.statusCode },
+        });
+        const safeMessage =
+          err.statusCode === 502
+            ? 'Upstream MCP destination resolution failed'
+            : err.statusCode === 400
+              ? 'Invalid upstream MCP endpoint configuration'
+              : 'Upstream MCP destination blocked by SSRF security policy';
+        res.status(err.statusCode).json({
+          verified: false,
+          error: err.code,
+          message: safeMessage,
+          correlationId: ctx.correlationId,
+        });
+        return;
+      }
+
+      this.audit.record({
+        event: 'MCP_HANDSHAKE_FAILED',
+        outcome: 'failure',
+        message: err instanceof Error ? err.message : 'External MCP verification failed',
+        correlationId: ctx.correlationId,
+        accountId: claims.accountId,
+        mcpServerId: verified.resolvedMcpServerId,
+      });
+
       res.status(502).json({
         verified: false,
         error: 'MCP_HANDSHAKE_FAILED',
-        message: err instanceof Error ? err.message : 'External MCP verification failed',
+        message: 'External MCP verification failed',
         correlationId: ctx.correlationId,
       });
     }
+  };
+
+  handleIssuetoken = async (req: Request, res: Response): Promise<void> => {
+    return this.handleIssueTokenEndpoint(req, res);
   };
 
   handleIssueTokenEndpoint = async (req: Request, res: Response): Promise<void> => {
@@ -183,77 +220,19 @@ export class AamarvaBackendRelay {
         return;
       }
 
-      res.status(400).json({
-        error: 'TOKEN_ENCRYPTION_FAILED',
-        message: err instanceof Error ? err.message : 'Failed to encrypt token for agent',
-        correlationId: ctx.correlationId,
-      });
-    }
-  };
-
-  handleIssueEncryptedToken = async (req: Request, res: Response): Promise<void> => {
-    const ctx = createExecutionContext({
-      gatewayId: this.gatewayId,
-      mcpServerId: this.mcpServerId,
-    });
-
-    const verified = await this.authAdapter.verifyAuthorizationGrant(req.body, ctx.correlationId);
-    if (!verified.ok) {
-      res.status(verified.statusCode).json({
-        error: verified.code,
-        message: verified.message,
-        correlationId: ctx.correlationId,
-      });
-      return;
-    }
-
-    try {
-      const issued = await this.redemptionService.issueAndEncryptToken({
-        context: verified.context,
-        agentPublicKeyPem: verified.agentPublicKeyPem,
-        correlationId: ctx.correlationId,
-      });
-
       this.audit.record({
-        event: 'TOKEN_ENCRYPTED',
-        outcome: 'success',
-        message: 'Encrypted short-lived token and Gateway public key returned to AAMARVA backend',
+        event: 'TOKEN_ENCRYPTION_FAILED',
+        outcome: 'failure',
+        message: err instanceof Error ? err.message : 'Failed to encrypt token for agent',
         correlationId: ctx.correlationId,
         agentId: verified.context.agentId,
         accountId: verified.context.accountId,
         mcpServerId: verified.context.mcpServerId,
-        details: {
-          tokenId: issued.tokenId,
-          algorithm: issued.encryptedToken.algorithm,
-          gatewayKeyId: issued.gatewayPublicKey.keyId,
-          connectionId: verified.context.scope.connectionId,
-        },
       });
-
-      res.status(201).json({
-        tokenId: issued.tokenId,
-        expiresAt: issued.expiresAt,
-        gatewayId: this.gatewayId,
-        mcpServerId: verified.context.mcpServerId,
-        redemptionEndpoint: '/api/v1/redeem',
-        encryptedToken: issued.encryptedToken,
-        gatewayPublicKey: issued.gatewayPublicKey,
-        gatewaySignature: issued.gatewaySignature,
-        correlationId: ctx.correlationId,
-      });
-    } catch (err) {
-      if (err instanceof InsufficientGrantValidityError) {
-        res.status(err.statusCode).json({
-          error: err.code,
-          message: err.message,
-          correlationId: ctx.correlationId,
-        });
-        return;
-      }
 
       res.status(400).json({
         error: 'TOKEN_ENCRYPTION_FAILED',
-        message: err instanceof Error ? err.message : 'Failed to encrypt token for agent',
+        message: 'Failed to encrypt token for agent',
         correlationId: ctx.correlationId,
       });
     }

@@ -12,6 +12,32 @@ export const SECURITY_DEFAULTS = {
   HKDF_INFO_PREFIX: 'aamarva-mcp-gateway:token-envelope:v1',
 } as const;
 
+export function parsePrivateKeySafe(pem: string): crypto.KeyObject {
+  const normalized = pem.replace(/\\n/g, '\n').trim();
+  try {
+    return crypto.createPrivateKey({ key: normalized, format: 'pem', type: 'pkcs8' });
+  } catch {
+    try {
+      return crypto.createPrivateKey({ key: normalized, format: 'pem', type: 'sec1' });
+    } catch {
+      return crypto.createPrivateKey(normalized);
+    }
+  }
+}
+
+export function parsePublicKeySafe(pem: string): crypto.KeyObject {
+  const normalized = pem.replace(/\\n/g, '\n').trim();
+  try {
+    return crypto.createPublicKey({ key: normalized, format: 'pem', type: 'spki' });
+  } catch {
+    try {
+      return crypto.createPublicKey({ key: normalized, format: 'pem', type: 'pkcs1' });
+    } catch {
+      return crypto.createPublicKey(normalized);
+    }
+  }
+}
+
 const SENSITIVE_KEY_PATTERN =
   /^(token|plaintexttoken|rawtoken|privatekey|secret|password|authorization|authorizationheader|apikey|mcpcredentials|encryptedtoken|encryptedcredentials|encryptedcredentialsjson|ciphertext|authheader|customheaders|credential|credentials|bearer)$/i;
 

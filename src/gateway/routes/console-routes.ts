@@ -244,7 +244,7 @@ export function createOperatorConsoleRouter(gateway: AamarvaMcpGateway): Router 
       };
 
       const signature = signPayloadAsMockAamarva(claims, devKeys.signingPrivateKeyPem);
-      const gatewayResp = await callGatewayAsMockAamarva('/api/v1/aamarva/authorizations/issue-token', {
+      const gatewayResp = await callGatewayAsMockAamarva('/issuetoken', {
         claims,
         keyId: devKeys.signingKeyId,
         signature,
@@ -257,7 +257,7 @@ export function createOperatorConsoleRouter(gateway: AamarvaMcpGateway): Router 
       });
     });
 
-    // Sandbox Step 5-6: Simulated Agent ADK decrypts envelope with its X25519 private key & calls POST /api/v1/redeem
+    // Sandbox Step 5-6: Simulated Agent ADK decrypts envelope with its X25519 private key & calls POST /execute
     router.post('/sandbox/agent-decrypt-and-redeem', async (req, res) => {
       const { encryptedToken, agentId, accountId } = req.body ?? {};
       const profile = sandboxAgents.get(`${agentId}:${accountId}`);
@@ -268,7 +268,7 @@ export function createOperatorConsoleRouter(gateway: AamarvaMcpGateway): Router 
 
       try {
         const decrypted = decryptTokenAsAgent(encryptedToken, profile.privateKeyPem);
-        const redeemResp = await localSandboxFetch(`${baseLocalUrl}/api/v1/redeem`, {
+        const redeemResp = await localSandboxFetch(`${baseLocalUrl}/execute`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -297,10 +297,10 @@ export function createOperatorConsoleRouter(gateway: AamarvaMcpGateway): Router 
       }
     });
 
-    // Sandbox Replay Attack Test: Re-submits an already-redeemed plaintext token directly to /api/v1/redeem
+    // Sandbox Replay Attack Test: Re-submits an already-redeemed plaintext token directly to /execute
     router.post('/sandbox/replay-token', async (req, res) => {
       const { token, agentId, accountId, mcpServerId } = req.body ?? {};
-      const redeemResp = await localSandboxFetch(`${baseLocalUrl}/api/v1/redeem`, {
+      const redeemResp = await localSandboxFetch(`${baseLocalUrl}/execute`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -312,24 +312,23 @@ export function createOperatorConsoleRouter(gateway: AamarvaMcpGateway): Router 
       res.status(redeemResp.status).json(redeemJson);
     });
 
-    // Sandbox Step 7: Mock AAMARVA Backend relays MCP tools/list or tools/call
+    // Sandbox Step 7: Internal Gateway MCP tools/list or tools/call via ExecutionProxy
     router.post('/sandbox/aamarva-relay-tools-list', async (req, res) => {
       const { sessionId, agentId, accountId } = req.body ?? {};
-      const gatewayResp = await callGatewayAsMockAamarva('/api/v1/aamarva/mcp/tools/list', {
+      const result = await gateway.executionProxy.listAuthorizedTools({
         requestId: `relay_${crypto.randomBytes(6).toString('hex')}`,
         sessionId,
         agentId,
         accountId,
         mcpServerId: gateway.config.mcpServerId,
         gatewayId: gateway.config.gatewayId,
-        timestamp: new Date().toISOString(),
       });
-      res.status(gatewayResp.status).json(gatewayResp.json);
+      res.status(result.statusCode).json(result.body);
     });
 
     router.post('/sandbox/aamarva-relay-tool-call', async (req, res) => {
       const { sessionId, agentId, accountId, toolName, arguments: toolArgs } = req.body ?? {};
-      const gatewayResp = await callGatewayAsMockAamarva('/api/v1/aamarva/mcp/tools/call', {
+      const result = await gateway.executionProxy.executeAuthorizedTool({
         requestId: `relay_${crypto.randomBytes(6).toString('hex')}`,
         sessionId,
         agentId,
@@ -338,9 +337,8 @@ export function createOperatorConsoleRouter(gateway: AamarvaMcpGateway): Router 
         gatewayId: gateway.config.gatewayId,
         toolName,
         arguments: toolArgs ?? {},
-        timestamp: new Date().toISOString(),
       });
-      res.status(gatewayResp.status).json(gatewayResp.json);
+      res.status(result.statusCode).json(result.body);
     });
   }
 

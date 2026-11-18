@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { SECURITY_DEFAULTS, canonicalizeJson } from '../config/security.ts';
+import { SECURITY_DEFAULTS, canonicalizeJson, parsePublicKeySafe } from '../config/security.ts';
 
 export type EnvelopeAlgorithm =
   | 'X25519-HKDF-SHA256-AES-256-GCM'
@@ -67,10 +67,9 @@ export function buildEnvelopeAad(params: {
  * AAMARVA cannot inspect the plaintext token while relaying it to the agent.
  */
 export function encryptTokenForAgent(input: TokenEnvelopeInput): EncryptedTokenEnvelope {
-  const normalizedPem = input.agentPublicKeyPem.replace(/\\n/g, '\n').trim();
   let agentPubKey: crypto.KeyObject;
   try {
-    agentPubKey = crypto.createPublicKey(normalizedPem);
+    agentPubKey = parsePublicKeySafe(input.agentPublicKeyPem);
   } catch (err) {
     throw new Error(
       `Invalid agent public key: ${err instanceof Error ? err.message : 'unparseable key'}`,

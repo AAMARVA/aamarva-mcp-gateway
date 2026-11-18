@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { canonicalizeJson, sha256Hex } from '../config/security.ts';
+import { canonicalizeJson, sha256Hex, parsePrivateKeySafe, parsePublicKeySafe } from '../config/security.ts';
 
 export interface GatewaySigningKeyPairConfig {
   keyId: string;
@@ -43,10 +43,9 @@ export class GatewayIdentityKeyManager {
     }
 
     for (const [keyId, entry] of Object.entries(options.signingKeys)) {
-      const normalizedPriv = entry.privateKeyPem.replace(/\\n/g, '\n').trim();
-      const privateKey = crypto.createPrivateKey(normalizedPriv);
+      const privateKey = parsePrivateKeySafe(entry.privateKeyPem);
       const publicKey = entry.publicKeyPem
-        ? crypto.createPublicKey(entry.publicKeyPem.replace(/\\n/g, '\n').trim())
+        ? parsePublicKeySafe(entry.publicKeyPem)
         : crypto.createPublicKey(privateKey);
 
       const keyType = privateKey.asymmetricKeyType;
@@ -155,7 +154,7 @@ export function verifyGatewayResponseSignature(params: {
   signatureBase64: string;
   gatewayPublicKey: GatewayPublicKeyMetadata;
 }): boolean {
-  const pubKey = crypto.createPublicKey(params.gatewayPublicKey.publicKey);
+  const pubKey = parsePublicKeySafe(params.gatewayPublicKey.publicKey);
   const spkiDer = pubKey.export({ type: 'spki', format: 'der' }) as Buffer;
   const expectedFingerprint = `sha256:${sha256Hex(spkiDer)}`;
   if (expectedFingerprint !== params.gatewayPublicKey.fingerprint) {

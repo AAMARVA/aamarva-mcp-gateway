@@ -12,6 +12,7 @@ import type { RequestWithRawBody } from '../middleware/authentication.ts';
 import { createErrorHandlerMiddleware } from '../middleware/error-handler.ts';
 import { createRateLimitMiddleware } from '../middleware/rate-limit.ts';
 import {
+  attachStrictAamarvaIngressGuard,
   createJsonContentTypeMiddleware,
   createTlsEnforcementMiddleware,
 } from '../middleware/request-validation.ts';
@@ -33,9 +34,7 @@ import { RedemptionService } from '../redemption/redemption-service.ts';
 import { RedemptionStore } from '../redemption/redemption-store.ts';
 import { ReplayProtection } from '../redemption/replay-protection.ts';
 import { SessionSyncOutboxProcessor } from '../redemption/session-sync-outbox.ts';
-import { createAamarvaRouter } from '../routes/aamarva-routes.ts';
 import { createHealthRouter } from '../routes/health-routes.ts';
-import { createRedemptionRouter } from '../routes/redemption-routes.ts';
 import type { DnsLookupFn } from '../security/ssrf-guard.ts';
 import { InMemoryGatewayStateStore } from '../storage/adapters/memory-store.ts';
 import { RedisGatewayStateStore } from '../storage/adapters/redis-store.ts';
@@ -71,6 +70,7 @@ export class AamarvaMcpGateway {
   public readonly executionProxy: ExecutionProxy;
   public readonly toolDiscovery: ToolDiscoveryService;
   public readonly connectionManager: McpConnectionManager;
+  public readonly authAdapter: AamarvaAuthorizationAdapter;
   public readonly backendRelay: AamarvaBackendRelay;
   public readonly redemptionController: RedemptionController;
 
@@ -203,7 +203,7 @@ export class AamarvaMcpGateway {
       metrics: this.metrics,
     });
 
-    const authAdapter = new AamarvaAuthorizationAdapter({
+    this.authAdapter = new AamarvaAuthorizationAdapter({
       verifier: this.signatureVerifier,
       store: this.store,
       gatewayId: config.gatewayId,
@@ -220,6 +220,7 @@ export class AamarvaMcpGateway {
         await this.connectionManager.disconnectAccount(accountId);
       },
     });
+    const authAdapter = this.authAdapter;
 
     this.toolDiscovery = new ToolDiscoveryService(this.mcpAdapter);
     const toolExecution = new ToolExecutionService(this.mcpAdapter);
@@ -315,14 +316,19 @@ export class AamarvaMcpGateway {
 
   /**
    * Builds the strict Gateway Express application containing:
-   * - Health checks (/healthz, /readyz)
-   * - Primary AAMARVA integration endpoints:
-   *   - POST /execute (agent one-time token redemption)
+   * - Health checks (GET /healthz, GET /readyz)
+   * - Exactly three permitted public AAMARVA integration endpoints:
    *   - POST /handshake (AAMARVA Core initial verification handshake)
    *   - POST /issuetoken (AAMARVA Core agent-specific encrypted token issuance)
-   * - Preserved compatibility/operations routes (/api/v1/redeem, /api/v1/aamarva/*)
+   *   - POST /execute (agent one-time token redemption)
    */
   attachGatewayRoutes(app: Express): void {
+    app.set('strict routing', true);
+    app.set('case sensitive routing', true);
+    if (this.config.aamarva.adapterEnabled) {
+      attachStrictAamarvaIngressGuard(app);
+    }
+
     app.use(
       express.json({
         limit: this.config.security.maxRequestBodyBytes,
@@ -354,24 +360,28 @@ export class AamarvaMcpGateway {
       audit: this.audit,
     });
 
-    app.use(
-      '/',
-      createHealthRouter({
-        gatewayId: this.config.gatewayId,
-        mcpServerId: this.config.mcpServerId,
-        store: this.store,
-        mcpAdapter: this.mcpAdapter,
-      }),
-    );
+    if (!this.config.aamarva.adapterEnabled) {
+      app.use(
+        '/',
+        createHealthRouter({
+          gatewayId: this.config.gatewayId,
+          mcpServerId: this.config.mcpServerId,
+          store: this.store,
+          mcpAdapter: this.mcpAdapter,
+        }),
+      );
 
-    // Primary three AAMARVA integration endpoints
-    app.post(
-      '/execute',
-      tlsMiddleware,
-      redeemRateLimit,
-      jsonTypeMiddleware,
-      this.redemptionController.handleExecute,
-    );
+      app.all(['/healthz', '/readyz'], (_req, res) => {
+        res.setHeader('Allow', 'GET');
+        res.status(405).json({
+          error: 'METHOD_NOT_ALLOWED',
+          message: 'Only GET is supported on health check endpoints',
+        });
+      });
+    }
+
+    // Exactly the three permitted public endpoints for AAMARVA integration:
+    // 1. POST /handshake
     app.post(
       '/handshake',
       tlsMiddleware,
@@ -380,35 +390,33 @@ export class AamarvaMcpGateway {
       backendAuthMiddleware,
       this.backendRelay.handleMcpHandshake,
     );
+
+    // 2. POST /issuetoken
     app.post(
       '/issuetoken',
       tlsMiddleware,
       relayRateLimit,
       jsonTypeMiddleware,
       backendAuthMiddleware,
-      this.backendRelay.handleIssueTokenEndpoint,
+      this.backendRelay.handleIssuetoken,
     );
 
-    app.use(
-      '/api/v1',
-      createRedemptionRouter({
-        controller: this.redemptionController,
-        tlsMiddleware,
-        rateLimitMiddleware: redeemRateLimit,
-        jsonTypeMiddleware,
-      }),
+    // 3. POST /execute
+    app.post(
+      '/execute',
+      tlsMiddleware,
+      redeemRateLimit,
+      jsonTypeMiddleware,
+      this.redemptionController.handleExecute,
     );
 
-    app.use(
-      '/api/v1/aamarva',
-      createAamarvaRouter({
-        relay: this.backendRelay,
-        tlsMiddleware,
-        rateLimitMiddleware: relayRateLimit,
-        jsonTypeMiddleware,
-        backendAuthMiddleware,
-      }),
-    );
+    app.all(['/handshake', '/issuetoken', '/execute'], (_req, res) => {
+      res.setHeader('Allow', 'POST');
+      res.status(405).json({
+        error: 'METHOD_NOT_ALLOWED',
+        message: 'Only POST is supported on this Gateway endpoint',
+      });
+    });
   }
 
   createStandaloneApp(): Express {
@@ -417,8 +425,19 @@ export class AamarvaMcpGateway {
       'trust proxy',
       this.config.security.trustedProxies.length > 0 ? this.config.security.trustedProxies : false,
     );
+    app.set('strict routing', true);
+    app.set('case sensitive routing', true);
     app.disable('x-powered-by');
+    if (this.config.aamarva.adapterEnabled) {
+      attachStrictAamarvaIngressGuard(app);
+    }
     this.attachGatewayRoutes(app);
+    app.use((_req, res) => {
+      res.status(404).json({
+        error: 'NOT_FOUND',
+        message: 'Endpoint not found',
+      });
+    });
     app.use(createErrorHandlerMiddleware(this.logger));
     return app;
   }

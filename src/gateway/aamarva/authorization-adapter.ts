@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { AuthorizationContext } from '../core/authorization-context.ts';
-import { constantTimeEqualStrings, sha256Hex } from '../config/security.ts';
+import { constantTimeEqualStrings, sha256Hex, parsePublicKeySafe } from '../config/security.ts';
 import { canonicalizeMcpEndpoint } from '../crypto/credential-vault.ts';
 import { SsrfBlockedError } from '../security/ssrf-guard.ts';
 import type { AuditRecorder } from '../observability/audit.ts';
@@ -756,10 +756,9 @@ export class AamarvaAuthorizationAdapter {
     }
 
     // Validate agent public key is strictly EC P-256 and matches registered SHA-256 SPKI fingerprint
-    const normalizedAgentPem = claims.agentPublicKeyPem.replace(/\\n/g, '\n').trim();
     let agentKeyObj: crypto.KeyObject;
     try {
-      agentKeyObj = crypto.createPublicKey(normalizedAgentPem);
+      agentKeyObj = parsePublicKeySafe(claims.agentPublicKeyPem);
     } catch {
       return {
         ok: false,
@@ -938,7 +937,7 @@ export class AamarvaAuthorizationAdapter {
     return {
       ok: true,
       context,
-      agentPublicKeyPem: normalizedAgentPem,
+      agentPublicKeyPem: claims.agentPublicKeyPem,
       invocationId,
     };
   }

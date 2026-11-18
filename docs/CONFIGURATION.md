@@ -12,6 +12,7 @@ All configuration is loaded via `loadGatewayConfig()` (`src/gateway/config/envir
 | `GATEWAY_ACTIVE_SIGNING_KEY_ID` | Prod Yes | Ephemeral dev key | Active `keyId` inside `GATEWAY_SIGNING_KEYS_JSON` used to sign token issuance responses. |
 | `GATEWAY_SIGNING_KEYS_JSON` | Prod Yes | Ephemeral dev keypair | JSON map `{ [keyId]: { privateKeyPem, publicKeyPem? } }` for the Gateway's own Ed25519 or P-256 signing identity. |
 | `AAMARVA_BASE_URL` | Yes | `https://api.aamarva.example.com` | Base URL for outbound AAMARVA backend calls. |
+| `ENABLE_AAMARVA_ADAPTER` | No | `true` | Enforces strict three-endpoint-only ingress (`POST /handshake`, `POST /issuetoken`, `POST /execute`) and blocks all other routes (`404`/`405`). |
 | `AAMARVA_BACKEND_AUTH_SECRET` | Prod Yes | Ephemeral dev secret | Minimum 16-char shared secret for HMAC-SHA256 authentication on `/api/v1/aamarva/*`. |
 | `AAMARVA_TRUSTED_SIGNING_KEYS_JSON` | Prod Yes | Ephemeral dev key | JSON object mapping `keyId` → PEM SPKI public key (Ed25519 or P-256). Supports rotation. |
 | `AAMARVA_MAX_CLOCK_SKEW_SECONDS` | No | `60` | Max clock drift allowed on signed grants and backend HMAC timestamps (5–300). |

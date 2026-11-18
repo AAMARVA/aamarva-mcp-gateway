@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { canonicalizeJson } from '../config/security.ts';
+import { canonicalizeJson, parsePublicKeySafe } from '../config/security.ts';
 
 export interface SignatureVerificationResult {
   valid: boolean;
@@ -13,8 +13,7 @@ export class SignatureVerifier {
   constructor(trustedSigningKeysPem: Record<string, string>) {
     this.trustedKeys = new Map();
     for (const [keyId, pem] of Object.entries(trustedSigningKeysPem)) {
-      const normalizedPem = pem.replace(/\\n/g, '\n').trim();
-      const keyObject = crypto.createPublicKey(normalizedPem);
+      const keyObject = parsePublicKeySafe(pem);
       this.trustedKeys.set(keyId, keyObject);
     }
   }

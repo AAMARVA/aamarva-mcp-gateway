@@ -121,9 +121,15 @@ export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): Gateway
     }
   }
 
+  const effectivePort =
+    env.GATEWAY_PORT ||
+    (env.NGINX_PORT && env.PORT === env.NGINX_PORT
+      ? env.DEFAULT_APP_PORT || '3000'
+      : env.PORT);
+
   const rawConfig = {
     nodeEnv,
-    port: parseIntVal(env.PORT, 3000),
+    port: parseIntVal(effectivePort, 3000),
     gatewayId: env.GATEWAY_ID ?? 'gw_aamarva_local_01',
     mcpServerId: env.MCP_SERVER_ID ?? 'mcp_srv_local_01',
     gatewayPublicUrl: (env.GATEWAY_PUBLIC_URL || env.APP_URL || '').trim() || undefined,
@@ -132,6 +138,7 @@ export function loadGatewayConfig(env: NodeJS.ProcessEnv = process.env): Gateway
       signingKeys: gatewaySigningKeys,
     },
     aamarva: {
+      adapterEnabled: parseBool(env.ENABLE_AAMARVA_ADAPTER ?? env.AAMARVA_ADAPTER_ENABLED, true),
       baseUrl: env.AAMARVA_BASE_URL ?? 'https://api.aamarva.example.com',
       backendAuthSecret,
       trustedSigningKeys,

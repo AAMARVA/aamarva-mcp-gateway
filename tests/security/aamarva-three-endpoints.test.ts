@@ -970,43 +970,15 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
     });
     expect(replayResp.status).toBe(409);
 
-    // f) Mediated MCP tools/call through AAMARVA backend succeeds for authorized tool and blocks unauthorized tool
-    const callOkBody = {
-      requestId: `call_${crypto.randomBytes(6).toString('hex')}`,
-      timestamp: new Date().toISOString(),
-      sessionId: winJson.sessionId,
-      agentId: 'agent_exec_01',
-      accountId: 'acc_cust_01',
-      mcpServerId: config.mcpServerId,
-      gatewayId: config.gatewayId,
-      toolName: 'subject_echo',
-      arguments: { text: 'hello-subject-mcp' },
-    };
-    const callOkHdr = signBackendHeaders('/api/v1/aamarva/mcp/tools/call', callOkBody);
-    const callOkResp = await fetch(`${gatewayBaseUrl}/api/v1/aamarva/mcp/tools/call`, {
+    // f) Alternate tool-call endpoint /api/v1/aamarva/mcp/tools/call is removed and returns 404
+    const call404 = await fetch(`${gatewayBaseUrl}/api/v1/aamarva/mcp/tools/call`, {
       method: 'POST',
-      headers: callOkHdr.headers,
-      body: callOkHdr.rawBody,
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
     });
-    expect(callOkResp.status).toBe(200);
-    const callOkData = await callOkResp.json();
-    expect(JSON.stringify(callOkData)).toContain('hello-subject-mcp');
+    expect(call404.status).toBe(404);
 
-    const callDeniedBody = {
-      ...callOkBody,
-      requestId: `call_deny_${crypto.randomBytes(6).toString('hex')}`,
-      toolName: 'subject_admin_reset',
-      arguments: {},
-    };
-    const callDeniedHdr = signBackendHeaders('/api/v1/aamarva/mcp/tools/call', callDeniedBody);
-    const callDeniedResp = await fetch(`${gatewayBaseUrl}/api/v1/aamarva/mcp/tools/call`, {
-      method: 'POST',
-      headers: callDeniedHdr.headers,
-      body: callDeniedHdr.rawBody,
-    });
-    expect(callDeniedResp.status).toBe(403);
-
-    // g) Revoked token cannot be redeemed via /execute -> 401 TOKEN_REVOKED
+    // g) Legacy revoke route returns 404; internal revocation blocks /execute redemption -> 401 TOKEN_REVOKED
     const authRevId = `auth_rev_${crypto.randomBytes(4).toString('hex')}`;
     const tokRev = await issueAndDecrypt(authRevId);
     const revClaims = {
@@ -1022,12 +994,16 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       signature: signPayloadAsMockAamarva(revClaims, aamarvaPair.privateKey),
     };
     const revHdr = signBackendHeaders('/api/v1/aamarva/authorizations/revoke', revBody);
-    const revResp = await fetch(`${gatewayBaseUrl}/api/v1/aamarva/authorizations/revoke`, {
+    const revHttpResp = await fetch(`${gatewayBaseUrl}/api/v1/aamarva/authorizations/revoke`, {
       method: 'POST',
       headers: revHdr.headers,
       body: revHdr.rawBody,
     });
-    expect(revResp.status).toBe(200);
+    expect(revHttpResp.status).toBe(404);
+
+    const revInternal = await gateway.authAdapter.processRevocation(revBody, 'corr_rev_test');
+    expect(revInternal.ok).toBe(true);
+    expect(revInternal.statusCode).toBe(200);
 
     const execRevResp = await fetch(`${gatewayBaseUrl}/execute`, {
       method: 'POST',

@@ -428,7 +428,9 @@ export class McpConnectionManager {
       throw new HandshakeVerificationError(
         502,
         isAuthFailure ? 'MCP_UPSTREAM_AUTH_FAILED' : 'MCP_HANDSHAKE_FAILED',
-        `External MCP handshake verification failed: ${message}`,
+        isAuthFailure
+          ? 'Upstream MCP server rejected Gateway authentication credentials'
+          : 'External MCP handshake verification failed',
       );
     }
   }
@@ -565,7 +567,7 @@ export class McpConnectionManager {
         ok: false,
         statusCode: err instanceof SsrfBlockedError ? err.statusCode : 403,
         code: err instanceof SsrfBlockedError ? err.code : 'SSRF_BLOCKED_DESTINATION',
-        message: msg,
+        message: 'Upstream MCP destination blocked by SSRF security policy',
       };
     }
 
@@ -621,7 +623,25 @@ export class McpConnectionManager {
       dnsLookup: this.dnsLookup,
       fetchOverride: this.fetchOverride,
     });
-    await reconnectedAdapter.connect();
+    try {
+      await reconnectedAdapter.connect();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upstream MCP reconnection failed';
+      this.audit.record({
+        event: 'MCP_HANDSHAKE_FAILED',
+        outcome: 'failure',
+        message: `Upstream MCP reconnection failed: ${msg}`,
+        accountId: params.accountId,
+        mcpServerId: params.mcpServerId,
+        details: { connectionId: record.connectionId },
+      });
+      return {
+        ok: false,
+        statusCode: 502,
+        code: 'MCP_UPSTREAM_ERROR',
+        message: 'Upstream MCP connection failed',
+      };
+    }
     this.pool.set(record.connectionId, {
       accountId: record.accountId,
       canonicalEndpoint: validatedDest.canonicalEndpoint,

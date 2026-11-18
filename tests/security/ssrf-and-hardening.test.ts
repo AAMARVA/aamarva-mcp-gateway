@@ -174,10 +174,18 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
-  const agentKeys = crypto.generateKeyPairSync('x25519', {
+  const rawAgentPair = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
+  const agentKeys = {
+    ...rawAgentPair,
+    fingerprint: `sha256:${crypto
+      .createHash('sha256')
+      .update(crypto.createPublicKey(rawAgentPair.publicKey).export({ type: 'spki', format: 'der' }))
+      .digest('hex')}`,
+  };
 
   function signBackendHeaders(gw: AamarvaMcpGateway, reqPath: string, body: unknown) {
     const rawBody = JSON.stringify(body);
@@ -409,9 +417,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
 
     const hsRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       body,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', body),
+      signBackendHeaders(gateway, '/handshake', body),
     );
     expect(hsRes.status).toBe(200);
     expect(hsRes.json.verified).toBe(true);
@@ -441,6 +449,7 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       agentName: 'Public Agent',
       accountId: 'acct_pub',
       agentPublicKeyPem: agentKeys.publicKey,
+      agentPublicKeyFingerprint: agentKeys.fingerprint,
       mcpServerId: 'mcp_pub',
       gatewayId: 'gw_sec_01',
       integrationId: 'int_pub',
@@ -457,9 +466,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     };
     const issueRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/authorizations/issue-token',
+      '/issuetoken',
       grantBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/issue-token', grantBody),
+      signBackendHeaders(gateway, '/issuetoken', grantBody),
     );
     expect(issueRes.status).toBe(201);
 
@@ -467,7 +476,7 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       issueRes.json.encryptedToken as EncryptedTokenEnvelope,
       agentKeys.privateKey,
     );
-    const redeemRes = await postJson(baseUrl, '/api/v1/redeem', {
+    const redeemRes = await postJson(baseUrl, '/execute', {
       token: dec.token,
       agentId: 'agent_pub',
       accountId: 'acct_pub',
@@ -476,8 +485,8 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     expect(redeemRes.status).toBe(200);
     const sessionId = redeemRes.json.sessionId as string;
 
-    const callBody = {
-      requestId: `req_pub_call_${crypto.randomBytes(6).toString('hex')}`,
+    const callRes = await gateway.executionProxy.executeAuthorizedTool({
+      requestId: `req_pub_${crypto.randomBytes(6).toString('hex')}`,
       sessionId,
       agentId: 'agent_pub',
       accountId: 'acct_pub',
@@ -486,17 +495,10 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       connectionId: att.connectionId,
       toolName: 'public_ping',
       arguments: { tag: 'prod-ssrf-verified' },
-      timestamp: new Date().toISOString(),
-    };
-    const callRes = await postJson(
-      baseUrl,
-      '/api/v1/aamarva/mcp/tools/call',
-      callBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', callBody),
-    );
-    expect(callRes.status).toBe(200);
+    });
+    expect(callRes.statusCode).toBe(200);
     const parsedCall = JSON.parse(
-      ((callRes.json.result as { content: Array<{ text: string }> }).content[0]).text,
+      ((callRes.body.result as { content: Array<{ text: string }> }).content[0]).text,
     );
     expect(parsedCall).toEqual({
       ok: true,
@@ -560,9 +562,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       });
       const res = await postJson(
         baseUrl,
-        '/api/v1/aamarva/mcp/handshake',
+        '/handshake',
         hsBody,
-        signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', hsBody),
+        signBackendHeaders(gateway, '/handshake', hsBody),
       );
       expect(res.status, `Expected SSRF block for ${target.label}`).toBe(403);
       expect(res.json.verified).toBe(false);
@@ -595,9 +597,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       });
       const res = await postJson(
         baseUrl,
-        '/api/v1/aamarva/mcp/handshake',
+        '/handshake',
         hsBody,
-        signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', hsBody),
+        signBackendHeaders(gateway, '/handshake', hsBody),
       );
       expect(res.status, `Expected DNS SSRF block for ${endpoint}`).toBe(403);
       expect(res.json.error).toBe('SSRF_BLOCKED_DESTINATION');
@@ -688,9 +690,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     });
     const hsRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       hsBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', hsBody),
+      signBackendHeaders(gateway, '/handshake', hsBody),
     );
     expect(hsRes.status).toBe(200);
     const att = hsRes.json.attestation as GatewayVerificationAttestation;
@@ -703,6 +705,7 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       agentName: 'Rebind Agent',
       accountId: 'acct_rebind',
       agentPublicKeyPem: agentKeys.publicKey,
+      agentPublicKeyFingerprint: agentKeys.fingerprint,
       mcpServerId: 'mcp_rebind',
       gatewayId: 'gw_sec_01',
       integrationId: 'int_rebind',
@@ -719,13 +722,13 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     };
     const issueRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/authorizations/issue-token',
+      '/issuetoken',
       gBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/authorizations/issue-token', gBody),
+      signBackendHeaders(gateway, '/issuetoken', gBody),
     );
     expect(issueRes.status).toBe(201);
     const dec = decryptTokenAsAgent(issueRes.json.encryptedToken as EncryptedTokenEnvelope, agentKeys.privateKey);
-    const redeemRes = await postJson(baseUrl, '/api/v1/redeem', {
+    const redeemRes = await postJson(baseUrl, '/execute', {
       token: dec.token,
       agentId: 'agent_reb',
       accountId: 'acct_rebind',
@@ -750,14 +753,27 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       arguments: { tag: 'rebound' },
       timestamp: new Date().toISOString(),
     };
-    const reboundRes = await postJson(
+    const legacyHttp404 = await postJson(
       baseUrl,
       '/api/v1/aamarva/mcp/tools/call',
       callBody,
       signBackendHeaders(gateway, '/api/v1/aamarva/mcp/tools/call', callBody),
     );
-    expect(reboundRes.status).toBe(403);
-    expect(reboundRes.json.error).toBe('SSRF_BLOCKED_DESTINATION');
+    expect(legacyHttp404.status).toBe(404);
+
+    const reboundRes = await gateway.executionProxy.executeAuthorizedTool({
+      requestId: callBody.requestId,
+      sessionId: callBody.sessionId,
+      agentId: callBody.agentId,
+      accountId: callBody.accountId,
+      mcpServerId: callBody.mcpServerId,
+      gatewayId: callBody.gatewayId,
+      connectionId: callBody.connectionId,
+      toolName: callBody.toolName,
+      arguments: callBody.arguments,
+    });
+    expect(reboundRes.statusCode).toBe(403);
+    expect(reboundRes.body.error).toBe('SSRF_BLOCKED_DESTINATION');
     // Pooled connection must NOT make any HTTP call to the rebound destination
     expect(outboundAttempts.length).toBe(attemptsBeforeRebind);
   });
@@ -847,9 +863,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     for (const c of cases) {
       const res = await postJson(
         baseUrl,
-        '/api/v1/aamarva/mcp/handshake',
+        '/handshake',
         c.payload,
-        signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', c.payload),
+        signBackendHeaders(gateway, '/handshake', c.payload),
       );
       expect(res.status, `Expected 400 for ${c.label}`).toBe(400);
       expect(res.json.verified).toBe(false);
@@ -883,9 +899,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     });
     const wrongAcctRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       wrongAcct,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', wrongAcct),
+      signBackendHeaders(gateway, '/handshake', wrongAcct),
     );
     expect(wrongAcctRes.status).toBe(400);
     expect(wrongAcctRes.json.error).toBe('CREDENTIAL_DECRYPTION_FAILED');
@@ -900,9 +916,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     });
     const wrongIntRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       wrongInt,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', wrongInt),
+      signBackendHeaders(gateway, '/handshake', wrongInt),
     );
     expect(wrongIntRes.status).toBe(400);
     expect(wrongIntRes.json.error).toBe('CREDENTIAL_DECRYPTION_FAILED');
@@ -917,9 +933,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     });
     const wrongChlRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       wrongChl,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', wrongChl),
+      signBackendHeaders(gateway, '/handshake', wrongChl),
     );
     expect(wrongChlRes.status).toBe(400);
     expect(wrongChlRes.json.error).toBe('CREDENTIAL_DECRYPTION_FAILED');
@@ -947,9 +963,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
     });
     const tamperRes = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       tamperBody,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', tamperBody),
+      signBackendHeaders(gateway, '/handshake', tamperBody),
     );
     expect(tamperRes.status).toBe(400);
     expect(tamperRes.json.error).toBe('CREDENTIAL_DECRYPTION_FAILED');
@@ -970,9 +986,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
 
     const res = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       body,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', body),
+      signBackendHeaders(gateway, '/handshake', body),
     );
     expect(res.status).toBe(200);
     expect(res.json.verified).toBe(true);
@@ -1008,9 +1024,9 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
 
     const res = await postJson(
       baseUrl,
-      '/api/v1/aamarva/mcp/handshake',
+      '/handshake',
       body,
-      signBackendHeaders(gateway, '/api/v1/aamarva/mcp/handshake', body),
+      signBackendHeaders(gateway, '/handshake', body),
     );
     expect(res.status).toBe(200);
 

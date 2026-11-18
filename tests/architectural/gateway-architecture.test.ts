@@ -55,10 +55,15 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
-  const agentKeys = crypto.generateKeyPairSync('x25519', {
+  const agentKeys = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1',
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
+  const agentKeyFingerprint = `sha256:${crypto
+    .createHash('sha256')
+    .update(crypto.createPublicKey(agentKeys.publicKey).export({ type: 'spki', format: 'der' }))
+    .digest('hex')}`;
 
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agw-e2e-'));
@@ -160,25 +165,31 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     };
   }
 
-  it('proves the complete 7-phase lifecycle and enforces strict two-path boundaries', async () => {
-    // 0. Health endpoints expose no secrets
-    const health = await fetch(`${baseUrl}/healthz`).then((r) => r.json() as Promise<Record<string, unknown>>);
-    expect(health.status).toBe('ok');
-    expect(JSON.stringify(health)).not.toContain(backendSecret);
-    expect(JSON.stringify(health)).not.toContain('PRIVATE KEY');
+  it('proves the complete 7-phase lifecycle and enforces strict three-endpoint boundaries', async () => {
+    // 0. Non-allowlisted endpoints (including /, /healthz, /readyz) are rejected with 404
+    for (const blockedGet of ['/', '/healthz', '/readyz', '/api/console/status']) {
+      const r = await fetch(`${baseUrl}${blockedGet}`);
+      expect(r.status).toBe(404);
+    }
 
-    // 1. Plaintext HTTP (without TLS) to /api/v1/redeem is rejected when REQUIRE_TLS=true
-    const noTlsResp = await fetch(`${baseUrl}/api/v1/redeem`, {
+    // 1. Plaintext HTTP (without TLS) to /execute is rejected when REQUIRE_TLS=true
+    const noTlsResp = await fetch(`${baseUrl}/execute`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: 'x', agentId: 'a', accountId: 'b', mcpServerId: 'c' }),
     });
     expect(noTlsResp.status).toBe(403);
 
-    // 2. Architectural Boundary: No direct MCP, registration, messaging, or FLOOR endpoints exist for agents
+    // 2. Architectural Boundary: No direct MCP, registration, messaging, or legacy public endpoints exist
     for (const forbiddenPath of [
       '/mcp',
+      '/api/v1/redeem',
       '/api/v1/mcp/tools/call',
+      '/api/v1/aamarva/mcp/tools/call',
+      '/api/v1/aamarva/mcp/tools/list',
+      '/api/v1/aamarva/authorizations/issue-token',
+      '/api/v1/aamarva/authorizations/revoke',
+      '/api/v1/aamarva/mcp/handshake',
       '/api/v1/agents/register',
       '/api/v1/agents/message',
       '/api/v1/floor/approve',
@@ -187,32 +198,62 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
       expect(r.status).toBe(404);
     }
 
-    // 3. Architectural Boundary: Agent cannot call AAMARVA backend relay directly without backend HMAC
-    const unauthRelay = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/call', {
-      body: {
-        requestId: 'req_forged_1',
-        sessionId: 'sess_123456',
-        agentId: 'agent_1',
-        accountId: 'acct_1',
-        mcpServerId: 'mcp_arch_01',
-        gatewayId: 'gw_arch_01',
-        toolName: 'inventory_lookup',
-        arguments: {},
-        timestamp: new Date().toISOString(),
-      },
-    });
-    expect(unauthRelay.status).toBe(401);
+    // Unsupported HTTP methods on the three allowed endpoints MUST be rejected (405)
+    for (const ep of ['/handshake', '/issuetoken', '/execute']) {
+      const getResp = await httpJson(baseUrl, ep, { method: 'GET' });
+      expect(getResp.status).toBe(405);
+      const putResp = await httpJson(baseUrl, ep, { method: 'PUT', body: {} });
+      expect(putResp.status).toBe(405);
+    }
 
-    // Phase 1-5: AAMARVA backend submits signed authorization grant -> Gateway verifies, issues & encrypts token
+    // 3. Architectural Boundary: Agent cannot call AAMARVA backend control endpoints directly without backend HMAC
+    for (const controlPath of ['/handshake', '/issuetoken']) {
+      const unauthCtrl = await httpJson(baseUrl, controlPath, {
+        body: { claims: {}, keyId: 'k', signature: 's'.repeat(32) },
+      });
+      expect(unauthCtrl.status).toBe(401);
+    }
+
+    // Phase 0: Mandatory initial MCP verification handshake establishes verified connection & tool catalog
+    const nowHs = Date.now();
+    const hsClaims = {
+      challenge: `chl_arch_${crypto.randomBytes(12).toString('hex')}`,
+      accountId: 'acct_acme_01',
+      integrationId: 'int_arch_erp',
+      mcpServerId: 'mcp_arch_01',
+      gatewayId: 'gw_arch_01',
+      transport: 'stdio' as const,
+      endpoint: 'stdio://mcp_arch_01',
+      issuedAt: new Date(nowHs).toISOString(),
+      expiresAt: new Date(nowHs + 120_000).toISOString(),
+    };
+    const hsBody = {
+      claims: hsClaims,
+      keyId: 'aamarva-k1',
+      signature: signPayloadAsMockAamarva(hsClaims, aamarvaKeys.privateKey),
+    };
+    const hsRes = await httpJson(baseUrl, '/handshake', {
+      headers: signedBackendHeaders('/handshake', hsBody),
+      body: hsBody,
+    });
+    expect(hsRes.status).toBe(200);
+    expect(hsRes.json.verified).toBe(true);
+    const connectionId = (hsRes.json.attestation as { connectionId: string }).connectionId;
+
+    // Phase 1-5: AAMARVA backend submits signed canonical /issuetoken request -> Gateway verifies, issues & encrypts token
     // and returns Gateway's own public key + response signature
     const now = Date.now();
     const authId = `auth_${crypto.randomBytes(4).toString('hex')}`;
     const claims = {
       authorizationId: authId,
+      invocationId: authId,
       agentId: 'agent_procure_77',
       agentName: 'Procurement Agent 77',
       accountId: 'acct_acme_01',
+      integrationId: 'int_arch_erp',
+      connectionId,
       agentPublicKeyPem: agentKeys.publicKey,
+      agentPublicKeyFingerprint: agentKeyFingerprint,
       mcpServerId: 'mcp_arch_01',
       gatewayId: 'gw_arch_01',
       allowedTools: ['inventory_lookup', 'calculate_quote'],
@@ -223,13 +264,13 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     };
     const grantSig = signPayloadAsMockAamarva(claims, aamarvaKeys.privateKey);
     const issueBody = { claims, keyId: 'aamarva-k1', signature: grantSig };
-    const issueRes = await httpJson(baseUrl, '/api/v1/aamarva/authorizations/issue-token', {
-      headers: signedBackendHeaders('/api/v1/aamarva/authorizations/issue-token', issueBody),
+    const issueRes = await httpJson(baseUrl, '/issuetoken', {
+      headers: signedBackendHeaders('/issuetoken', issueBody),
       body: issueBody,
     });
     expect(issueRes.status).toBe(201);
     const envelope = issueRes.json.encryptedToken as EncryptedTokenEnvelope;
-    expect(envelope.algorithm).toBe('X25519-HKDF-SHA256-AES-256-GCM');
+    expect(envelope.algorithm).toBe('P256-HKDF-SHA256-AES-256-GCM');
 
     // Verify Gateway's own public key is present, distinct from agent key, and validly signs response
     const gwPubKey = issueRes.json.gatewayPublicKey as GatewayPublicKeyMetadata;
@@ -239,16 +280,7 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     expect(gwPubKey.publicKey).not.toBe(agentKeys.publicKey);
     expect(JSON.stringify(issueRes.json)).not.toContain('PRIVATE KEY');
 
-    const unsignedPortion = {
-      tokenId: issueRes.json.tokenId,
-      expiresAt: issueRes.json.expiresAt,
-      gatewayId: issueRes.json.gatewayId,
-      mcpServerId: issueRes.json.mcpServerId,
-      redemptionEndpoint: issueRes.json.redemptionEndpoint,
-      encryptedToken: issueRes.json.encryptedToken,
-      gatewayPublicKey: issueRes.json.gatewayPublicKey,
-      correlationId: issueRes.json.correlationId,
-    };
+    const { gatewaySignature: _sig, ...unsignedPortion } = issueRes.json;
     expect(
       verifyGatewayResponseSignature({
         payload: unsignedPortion,
@@ -261,7 +293,7 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     const decrypted = decryptTokenAsAgent(envelope, agentKeys.privateKey);
 
     // Phase 6: Agent contacts Gateway ONCE to redeem decrypted token -> Gateway syncs session to AAMARVA
-    const redeemRes = await httpJson(baseUrl, '/api/v1/redeem', {
+    const redeemRes = await httpJson(baseUrl, '/execute', {
       body: {
         token: decrypted.token,
         agentId: 'agent_procure_77',
@@ -284,7 +316,7 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     });
 
     // Token replay MUST fail
-    const replayRedeem = await httpJson(baseUrl, '/api/v1/redeem', {
+    const replayRedeem = await httpJson(baseUrl, '/execute', {
       body: {
         token: decrypted.token,
         agentId: 'agent_procure_77',
@@ -294,74 +326,12 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
     });
     expect(replayRedeem.status).toBe(409);
 
-    // Phase 7: Subsequent MCP tools/list & tools/call routed ONLY through authenticated AAMARVA backend
-    const listBody = {
-      requestId: `req_${crypto.randomBytes(6).toString('hex')}`,
-      sessionId,
-      agentId: 'agent_procure_77',
-      accountId: 'acct_acme_01',
-      mcpServerId: 'mcp_arch_01',
-      gatewayId: 'gw_arch_01',
-      timestamp: new Date().toISOString(),
-    };
-    const listRes = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/list', {
-      headers: signedBackendHeaders('/api/v1/aamarva/mcp/tools/list', listBody),
-      body: listBody,
-    });
-    expect(listRes.status).toBe(200);
-    expect((listRes.json.tools as Array<{ name: string }>).map((t) => t.name)).toEqual([
-      'inventory_lookup',
-      'calculate_quote',
-    ]);
+    // Phase 7: Alternate public tool-list and tool-call endpoints are removed and return 404
+    const list404 = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/list', { body: {} });
+    expect(list404.status).toBe(404);
 
-    const callBody = {
-      requestId: `req_${crypto.randomBytes(6).toString('hex')}`,
-      sessionId,
-      agentId: 'agent_procure_77',
-      accountId: 'acct_acme_01',
-      mcpServerId: 'mcp_arch_01',
-      gatewayId: 'gw_arch_01',
-      toolName: 'inventory_lookup',
-      arguments: { sku: 'SKU-SENSOR-X2' },
-      timestamp: new Date().toISOString(),
-    };
-    const callRes = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/call', {
-      headers: signedBackendHeaders('/api/v1/aamarva/mcp/tools/call', callBody),
-      body: callBody,
-    });
-    expect(callRes.status).toBe(200);
-    const callResult = callRes.json.result as { content: Array<{ text: string }> };
-    expect(JSON.parse(callResult.content[0].text)).toMatchObject({
-      found: true,
-      sku: 'SKU-SENSOR-X2',
-      stock: 128,
-    });
-
-    // Cross-agent session hijack attempt through relay MUST fail
-    const hijackBody = {
-      ...callBody,
-      requestId: `req_${crypto.randomBytes(6).toString('hex')}`,
-      agentId: 'agent_hijacker_99',
-    };
-    const hijackRes = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/call', {
-      headers: signedBackendHeaders('/api/v1/aamarva/mcp/tools/call', hijackBody),
-      body: hijackBody,
-    });
-    expect(hijackRes.status).toBe(403);
-    expect(hijackRes.json.error).toBe('AGENT_MISMATCH');
-
-    // Online revocation in AAMARVA Core immediately blocks subsequent execution (fail-closed)
-    mockAamarvaClient.markRevoked(authId);
-    const postRevokeBody = {
-      ...callBody,
-      requestId: `req_${crypto.randomBytes(6).toString('hex')}`,
-    };
-    const postRevokeRes = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/call', {
-      headers: signedBackendHeaders('/api/v1/aamarva/mcp/tools/call', postRevokeBody),
-      body: postRevokeBody,
-    });
-    expect(postRevokeRes.status).toBe(401);
-    expect(postRevokeRes.json.error).toBe('SESSION_REVOKED');
+    const call404 = await httpJson(baseUrl, '/api/v1/aamarva/mcp/tools/call', { body: {} });
+    expect(call404.status).toBe(404);
 
     // Verify Gateway package.json does not depend on any agent ADK
     const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8')) as {

@@ -42,7 +42,7 @@ export async function normalizeAndCheckDestination(
     }
     throw new SsrfBlockedError(
       'INVALID_MCP_ENDPOINT',
-      err instanceof Error ? err.message : 'Invalid external MCP endpoint URL',
+      'Invalid external MCP endpoint URL',
       400,
     );
   }
