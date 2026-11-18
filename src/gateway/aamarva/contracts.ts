@@ -154,19 +154,31 @@ export const AamarvaSignedHandshakeRequestSchema = z
 
 export type AamarvaSignedHandshakeRequest = z.infer<typeof AamarvaSignedHandshakeRequestSchema>;
 
+export const PositiveIntegerMinutesSchema = z
+  .number()
+  .int()
+  .positive()
+  .refine(
+    (val) =>
+      Number.isSafeInteger(val) &&
+      Number.isSafeInteger(val * 60_000) &&
+      !Number.isNaN(new Date(Date.now() + val * 60_000).getTime()),
+    'expires_in_minutes must be a positive safe integer within valid timestamp range',
+  );
+
 export const AamarvaIssueTokenEndpointClaimsSchema = z
   .object({
     authorizationId: z.string().min(3).max(128).optional(),
     invocationId: z.string().min(3).max(128).optional(),
-    agentId: z.string().min(1).max(128),
-    agentName: z.string().min(1).max(256).optional(),
+    agentId: z.string().min(1).max(128).refine((v) => v.trim().length > 0, 'agentId must not be blank'),
+    agentName: z.string().min(1).max(256).refine((v) => v.trim().length > 0, 'agentName must not be blank'),
     accountId: z.string().min(1).max(128),
     integrationId: z.string().min(1).max(128),
     connectionId: z.string().min(4).max(128).optional(),
     mcpServerId: z.string().min(1).max(128).optional(),
     gatewayId: z.string().min(1).max(128),
     endpoint: z.string().min(5).max(2048).optional(),
-    agentPublicKeyPem: z.string().max(8192).optional(),
+    agentPublicKeyPem: z.string().min(32).max(8192).refine((v) => v.trim().length >= 32, 'agentPublicKeyPem must not be blank'),
     agentPublicKeyFingerprint: z.string().min(16).max(128),
     allowedTools: z.array(z.string().min(1).max(128)).min(1),
     permissions: z.array(z.string().min(1).max(256)).optional(),
@@ -175,6 +187,7 @@ export const AamarvaIssueTokenEndpointClaimsSchema = z
     issuedAt: z.string().datetime().optional(),
     timestamp: z.string().datetime().optional(),
     expiresAt: z.string().datetime(),
+    expires_in_minutes: PositiveIntegerMinutesSchema.optional(),
   })
   .strict()
   .refine((c) => Boolean(c.authorizationId || c.invocationId), {
@@ -189,8 +202,17 @@ export const AamarvaSignedIssueTokenEndpointRequestSchema = z
     claims: AamarvaIssueTokenEndpointClaimsSchema,
     keyId: z.string().min(1).max(128),
     signature: z.string().min(16).max(2048),
+    expires_in_minutes: PositiveIntegerMinutesSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    (req) =>
+      req.claims.expires_in_minutes === undefined ||
+      req.expires_in_minutes === req.claims.expires_in_minutes,
+    {
+      message: 'Conflicting expires_in_minutes values between request body and claims',
+    },
+  );
 
 export type AamarvaSignedIssueTokenEndpointRequest = z.infer<
   typeof AamarvaSignedIssueTokenEndpointRequestSchema

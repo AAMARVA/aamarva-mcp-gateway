@@ -68,7 +68,9 @@ export class AamarvaMcpGateway {
   public readonly redemptionService: RedemptionService;
   public readonly replayProtection: ReplayProtection;
   public readonly executionProxy: ExecutionProxy;
+  public readonly sessionValidator: SessionValidator;
   public readonly toolDiscovery: ToolDiscoveryService;
+  public readonly toolExecution: ToolExecutionService;
   public readonly connectionManager: McpConnectionManager;
   public readonly authAdapter: AamarvaAuthorizationAdapter;
   public readonly backendRelay: AamarvaBackendRelay;
@@ -223,10 +225,10 @@ export class AamarvaMcpGateway {
     const authAdapter = this.authAdapter;
 
     this.toolDiscovery = new ToolDiscoveryService(this.mcpAdapter);
-    const toolExecution = new ToolExecutionService(this.mcpAdapter);
+    this.toolExecution = new ToolExecutionService(this.mcpAdapter);
     const forwarder = new ResponseForwarder();
     const responseHandler = new ProxyResponseHandler();
-    const sessionValidator = new SessionValidator({
+    this.sessionValidator = new SessionValidator({
       sessionManager: this.sessionManager,
       onlineRevocationCheck: config.aamarva.onlineRevocationCheck,
       aamarvaClient: this.aamarvaClient,
@@ -235,15 +237,16 @@ export class AamarvaMcpGateway {
     this.executionProxy = new ExecutionProxy({
       gatewayId: config.gatewayId,
       mcpServerId: config.mcpServerId,
-      sessionValidator,
+      sessionValidator: this.sessionValidator,
       toolDiscovery: this.toolDiscovery,
-      toolExecution,
+      toolExecution: this.toolExecution,
       forwarder,
       responseHandler,
       audit: this.audit,
       metrics: this.metrics,
       aamarvaClient: this.aamarvaClient,
       connectionManager: this.connectionManager,
+      defaultAdapter: this.mcpAdapter,
     });
 
     this.backendRelay = new AamarvaBackendRelay({
@@ -263,6 +266,11 @@ export class AamarvaMcpGateway {
       gatewayId: config.gatewayId,
       mcpServerId: config.mcpServerId,
       config,
+      executionProxy: this.executionProxy,
+      sessionValidator: this.sessionValidator,
+      store: this.store,
+      audit: this.audit,
+      metrics: this.metrics,
     });
   }
 

@@ -24,6 +24,7 @@ export class ExecutionProxy {
   private readonly metrics: GatewayMetrics;
   private readonly aamarvaClient?: AamarvaBackendClient;
   private readonly connectionManager?: McpConnectionManager;
+  private readonly defaultAdapter?: McpUpstreamAdapter;
 
   constructor(options: {
     gatewayId: string;
@@ -37,6 +38,7 @@ export class ExecutionProxy {
     metrics: GatewayMetrics;
     aamarvaClient?: AamarvaBackendClient;
     connectionManager?: McpConnectionManager;
+    defaultAdapter?: McpUpstreamAdapter;
   }) {
     this.gatewayId = options.gatewayId;
     this.mcpServerId = options.mcpServerId;
@@ -49,6 +51,154 @@ export class ExecutionProxy {
     this.metrics = options.metrics;
     this.aamarvaClient = options.aamarvaClient;
     this.connectionManager = options.connectionManager;
+    this.defaultAdapter = options.defaultAdapter;
+  }
+
+  async initializeSession(params: {
+    session: GatewaySession;
+    correlationId: string;
+    timeoutMs?: number;
+  }): Promise<ProxyHttpResult> {
+    const sessionCheck = await this.sessionValidator.validate({
+      sessionId: params.session.sessionId,
+      agentId: params.session.agentId,
+      accountId: params.session.accountId,
+      mcpServerId: params.session.mcpServerId,
+      gatewayId: params.session.gatewayId,
+    });
+    if (!sessionCheck.valid || !sessionCheck.session) {
+      this.metrics.incMcpExecutionsDenied();
+      const statusCode =
+        sessionCheck.code === 'SESSION_EXPIRED' ||
+        sessionCheck.code === 'AUTHORIZATION_EXPIRED' ||
+        sessionCheck.code === 'SESSION_REVOKED'
+          ? 401
+          : 403;
+      return this.responseHandler.denied(
+        sessionCheck.code ?? 'SESSION_INVALID',
+        sessionCheck.reason ?? 'Invalid session',
+        params.correlationId,
+        statusCode,
+      );
+    }
+
+    try {
+      const adapterRes = await this.resolveSessionAdapter({
+        session: sessionCheck.session,
+        requestId: params.correlationId,
+        accountId: sessionCheck.session.accountId,
+        agentId: sessionCheck.session.agentId,
+        mcpServerId: sessionCheck.session.mcpServerId,
+        integrationId: sessionCheck.session.scope.integrationId,
+        connectionId: sessionCheck.session.scope.connectionId,
+        expectedEndpoint: sessionCheck.session.scope.canonicalEndpoint,
+        correlationId: params.correlationId,
+      });
+      if (!adapterRes.ok) {
+        return adapterRes.result;
+      }
+
+      const adapter = adapterRes.adapterOverride ?? this.defaultAdapter;
+      if (!adapter) {
+        return this.responseHandler.denied(
+          'MCP_UPSTREAM_UNAVAILABLE',
+          'No upstream MCP transport adapter is configured',
+          params.correlationId,
+          502,
+        );
+      }
+
+      await adapter.connect();
+      if (adapter.ping) {
+        await adapter.ping({ timeoutMs: params.timeoutMs });
+      }
+      const status = adapter.getStatus();
+      if (!adapter.isConnected() || !status.connected || !status.negotiatedProtocolVersion) {
+        throw new Error('Upstream MCP server did not complete initialization');
+      }
+
+      return this.responseHandler.success({
+        protocolVersion: status.negotiatedProtocolVersion,
+        capabilities: status.serverCapabilities ?? {},
+        ...(status.serverInfo ? { serverInfo: status.serverInfo } : {}),
+        correlationId: params.correlationId,
+      });
+    } catch (err) {
+      this.audit.record({
+        event: 'MCP_TRANSPORT_ERROR',
+        outcome: 'failure',
+        message: `Upstream MCP initialize failed: ${err instanceof Error ? err.message : 'error'}`,
+        correlationId: params.correlationId,
+        sessionId: params.session.sessionId,
+        agentId: params.session.agentId,
+        accountId: params.session.accountId,
+        mcpServerId: params.session.mcpServerId,
+      });
+      return this.responseHandler.upstreamError(err, params.correlationId);
+    }
+  }
+
+  async pingSession(params: {
+    session: GatewaySession;
+    correlationId: string;
+    timeoutMs?: number;
+  }): Promise<ProxyHttpResult> {
+    const sessionCheck = await this.sessionValidator.validate({
+      sessionId: params.session.sessionId,
+      agentId: params.session.agentId,
+      accountId: params.session.accountId,
+      mcpServerId: params.session.mcpServerId,
+      gatewayId: params.session.gatewayId,
+    });
+    if (!sessionCheck.valid || !sessionCheck.session) {
+      const statusCode =
+        sessionCheck.code === 'SESSION_EXPIRED' ||
+        sessionCheck.code === 'AUTHORIZATION_EXPIRED' ||
+        sessionCheck.code === 'SESSION_REVOKED'
+          ? 401
+          : 403;
+      return this.responseHandler.denied(
+        sessionCheck.code ?? 'SESSION_INVALID',
+        sessionCheck.reason ?? 'Invalid session',
+        params.correlationId,
+        statusCode,
+      );
+    }
+
+    try {
+      const adapterRes = await this.resolveSessionAdapter({
+        session: sessionCheck.session,
+        requestId: params.correlationId,
+        accountId: sessionCheck.session.accountId,
+        agentId: sessionCheck.session.agentId,
+        mcpServerId: sessionCheck.session.mcpServerId,
+        integrationId: sessionCheck.session.scope.integrationId,
+        connectionId: sessionCheck.session.scope.connectionId,
+        expectedEndpoint: sessionCheck.session.scope.canonicalEndpoint,
+        correlationId: params.correlationId,
+      });
+      if (!adapterRes.ok) {
+        return adapterRes.result;
+      }
+
+      const adapter = adapterRes.adapterOverride ?? this.defaultAdapter;
+      if (!adapter) {
+        return this.responseHandler.denied(
+          'MCP_UPSTREAM_UNAVAILABLE',
+          'No upstream MCP transport adapter is configured',
+          params.correlationId,
+          502,
+        );
+      }
+
+      await adapter.connect();
+      if (adapter.ping) {
+        await adapter.ping({ timeoutMs: params.timeoutMs });
+      }
+      return this.responseHandler.success({ correlationId: params.correlationId });
+    } catch (err) {
+      return this.responseHandler.upstreamError(err, params.correlationId);
+    }
   }
 
   private async resolveSessionAdapter(params: {

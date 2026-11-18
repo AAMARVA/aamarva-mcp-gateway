@@ -46,9 +46,9 @@ export interface IssueEncryptedTokenResult {
 
 export interface RedeemTokenInput {
   token: string;
-  agentId: string;
-  accountId: string;
-  mcpServerId: string;
+  agentId?: string;
+  accountId?: string;
+  mcpServerId?: string;
   expectedAuthorizationId?: string;
   correlationId?: string;
 }
@@ -108,6 +108,7 @@ export class RedemptionService {
     context: AuthorizationContext;
     agentPublicKeyPem: string;
     correlationId: string;
+    expiresInMinutes?: number;
     invocationId?: string;
     redemptionEndpoint?: string;
     gatewayPublicUrl?: string | null;
@@ -121,11 +122,26 @@ export class RedemptionService {
       );
     }
 
-    const effectiveTtlSeconds = Math.min(this.tokenTtlSeconds, remainingSeconds);
+    let requestedTtlSeconds: number;
+    if (params.expiresInMinutes !== undefined) {
+      if (
+        typeof params.expiresInMinutes !== 'number' ||
+        !Number.isSafeInteger(params.expiresInMinutes) ||
+        params.expiresInMinutes <= 0
+      ) {
+        throw new Error('expiresInMinutes must be a positive integer');
+      }
+      requestedTtlSeconds = params.expiresInMinutes * 60;
+    } else {
+      requestedTtlSeconds = this.tokenTtlSeconds;
+    }
+
+    const effectiveTtlSeconds = Math.min(requestedTtlSeconds, remainingSeconds);
     const generated = generateShortLivedToken(
       effectiveTtlSeconds,
       nowMs,
       params.context.expiresAtMs,
+      { allowExtendedTtl: params.expiresInMinutes !== undefined },
     );
 
     const envelope = encryptTokenForAgent({
@@ -227,6 +243,10 @@ export class RedemptionService {
       gatewaySignature,
       ...(params.extendedSignedPayload ? { unsignedResponse } : {}),
     };
+  }
+
+  async getIssuedTokenByHash(tokenHash: string): Promise<IssuedTokenRecord | null> {
+    return this.store.getIssuedTokenByHash(tokenHash);
   }
 
   /**

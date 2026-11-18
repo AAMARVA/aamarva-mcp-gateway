@@ -430,6 +430,7 @@ describe('Strict Three-Endpoint-Only Public Access Enforcement Across All Entryp
           accountId: 'acc_strict_01',
           integrationId: 'int_strict_01',
           agentId: 'agent_strict_01',
+          agentName: 'Strict Agent 01',
           agentPublicKeyPem: agentKeys.publicKey,
           agentPublicKeyFingerprint: agentKeys.fingerprint,
           allowedTools: ['subject_ping'],
@@ -440,6 +441,7 @@ describe('Strict Three-Endpoint-Only Public Access Enforcement Across All Entryp
           keyId: 'aamarva-k1',
           claims: issueClaims,
           signature: signPayloadAsMockAamarva(issueClaims, aamarvaPair.privateKey),
+          expires_in_minutes: 2,
         };
         const issueSigned = signBackendHeaders(gateway, '/issuetoken', issueBody);
         const issueRes = await fetch(`${baseUrl}/issuetoken`, {

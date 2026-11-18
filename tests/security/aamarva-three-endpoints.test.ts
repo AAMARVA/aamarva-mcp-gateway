@@ -629,6 +629,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       accountId: 'acc_cust_01',
       integrationId: 'int_subject_01',
       agentId: 'agent_3ep_01',
+      agentName: 'Three Endpoints Agent 01',
       agentPublicKeyPem: agentKeys.publicKey,
       agentPublicKeyFingerprint: agentKeys.fingerprint,
       allowedTools: ['subject_echo', 'subject_status'],
@@ -639,6 +640,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       keyId: 'aamarva-core-key-1',
       claims,
       signature: signPayloadAsMockAamarva(claims, aamarvaPair.privateKey),
+      expires_in_minutes: 5,
     };
     const signedHdr = signBackendHeaders('/issuetoken', issueBody);
 
@@ -713,6 +715,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       keyId: 'aamarva-core-key-1',
       claims: noKeyClaims,
       signature: signPayloadAsMockAamarva(noKeyClaims, aamarvaPair.privateKey),
+      expires_in_minutes: 5,
     };
     const noKeyHdr = signBackendHeaders('/issuetoken', noKeyBody);
     const noKeyResp = await fetch(`${gatewayBaseUrl}/issuetoken`, {
@@ -739,6 +742,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       keyId: 'aamarva-core-key-1',
       claims: nonP256Claims,
       signature: signPayloadAsMockAamarva(nonP256Claims, aamarvaPair.privateKey),
+      expires_in_minutes: 5,
     };
     const nonP256Hdr = signBackendHeaders('/issuetoken', nonP256Body);
     const nonP256Resp = await fetch(`${gatewayBaseUrl}/issuetoken`, {
@@ -759,6 +763,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       keyId: 'aamarva-core-key-1',
       claims: badFpClaims,
       signature: signPayloadAsMockAamarva(badFpClaims, aamarvaPair.privateKey),
+      expires_in_minutes: 5,
     };
     const badFpHdr = signBackendHeaders('/issuetoken', badFpBody);
     const badFpResp = await fetch(`${gatewayBaseUrl}/issuetoken`, {
@@ -779,6 +784,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       keyId: 'aamarva-core-key-1',
       claims: badToolClaims,
       signature: signPayloadAsMockAamarva(badToolClaims, aamarvaPair.privateKey),
+      expires_in_minutes: 5,
     };
     const badToolHdr = signBackendHeaders('/issuetoken', badToolBody);
     const badToolResp = await fetch(`${gatewayBaseUrl}/issuetoken`, {
@@ -800,6 +806,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       keyId: 'aamarva-core-key-1',
       claims: expClaims,
       signature: signPayloadAsMockAamarva(expClaims, aamarvaPair.privateKey),
+      expires_in_minutes: 5,
     };
     const expHdr = signBackendHeaders('/issuetoken', expBody);
     const expResp = await fetch(`${gatewayBaseUrl}/issuetoken`, {
@@ -822,6 +829,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
         accountId: 'acc_cust_01',
         integrationId: 'int_subject_01',
         agentId: 'agent_exec_01',
+        agentName: 'Execute Test Agent 01',
         agentPublicKeyPem: agentKeys.publicKey,
         agentPublicKeyFingerprint: agentKeys.fingerprint,
         allowedTools: toolScope,
@@ -832,6 +840,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
         keyId: 'aamarva-core-key-1',
         claims,
         signature: signPayloadAsMockAamarva(claims, aamarvaPair.privateKey),
+        expires_in_minutes: 2,
       };
       const hdr = signBackendHeaders('/issuetoken', body);
       const r = await fetch(`${gatewayBaseUrl}/issuetoken`, {
@@ -844,7 +853,7 @@ describe('AAMARVA Three Integration Endpoints (/handshake, /issuetoken, /execute
       return decryptTokenAsAgent(data.encryptedToken, agentKeys.privateKey);
     };
 
-    // a) Direct MCP execution payload on /execute must be rejected (400)
+    // a) Malformed/bogus token on MCP execution payload on /execute must be rejected (400)
     const mcpAbuseResp = await fetch(`${gatewayBaseUrl}/execute`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

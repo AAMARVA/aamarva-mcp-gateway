@@ -104,6 +104,7 @@ export interface VerifiedMcpConnectionRecord {
   canonicalEndpoint: string;
   negotiatedProtocolVersion: string;
   serverInfo?: { name: string; version: string };
+  serverCapabilities?: Record<string, unknown>;
   toolsListHash: string;
   toolNames: string[];
   /** AES-256-GCM encrypted upstream credentials JSON; plaintext is never persisted or returned. */
@@ -131,6 +132,7 @@ export interface GatewayVerificationAttestation {
   mcpInitialized: true;
   negotiatedProtocolVersion: string;
   serverInfo?: { name: string; version: string };
+  serverCapabilities?: Record<string, unknown>;
   toolsDiscoverySuccess: true;
   toolCount: number;
   toolsListHash: string;
@@ -140,6 +142,15 @@ export interface GatewayVerificationAttestation {
 
 export interface GatewayHandshakeResponse {
   verified: true;
+  protocolVersion: string;
+  serverInfo?: { name: string; version: string };
+  capabilities: Record<string, unknown>;
+  serverCapabilities: Record<string, unknown>;
+  mcpInitialize: {
+    protocolVersion: string;
+    serverInfo?: { name: string; version: string };
+    capabilities: Record<string, unknown>;
+  };
   attestation: GatewayVerificationAttestation;
   gatewayPublicKey: GatewayPublicKeyMetadata;
   gatewaySignature: string;

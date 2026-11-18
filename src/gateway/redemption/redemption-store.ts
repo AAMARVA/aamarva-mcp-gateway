@@ -12,6 +12,10 @@ export class RedemptionStore {
     await this.store.saveIssuedToken(record);
   }
 
+  async getIssuedTokenByHash(tokenHash: string): Promise<IssuedTokenRecord | null> {
+    return this.store.getIssuedTokenByHash(tokenHash);
+  }
+
   async redeemAtomically(params: AtomicRedeemParams): Promise<AtomicRedeemResult> {
     return this.store.redeemTokenAtomically(params);
   }

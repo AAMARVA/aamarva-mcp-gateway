@@ -46,6 +46,15 @@ export class InMemoryGatewayStateStore implements GatewayStateStore {
     });
   }
 
+  async getIssuedTokenByHash(tokenHash: string): Promise<IssuedTokenRecord | null> {
+    const record = this.tokens.get(tokenHash);
+    if (!record) return null;
+    return {
+      ...record,
+      scope: { ...record.scope, allowedTools: [...record.scope.allowedTools] },
+    };
+  }
+
   async redeemTokenAtomically(params: AtomicRedeemParams): Promise<AtomicRedeemResult> {
     const record = this.tokens.get(params.tokenHash);
     if (!record) {
@@ -69,13 +78,13 @@ export class InMemoryGatewayStateStore implements GatewayStateStore {
     if (params.nowMs > record.expiresAtMs) {
       return { ok: false, code: 'TOKEN_EXPIRED', message: 'Authorization token has expired' };
     }
-    if (record.agentId !== params.agentId) {
+    if (params.agentId !== undefined && record.agentId !== params.agentId) {
       return { ok: false, code: 'AGENT_MISMATCH', message: 'Token agent binding mismatch' };
     }
-    if (record.accountId !== params.accountId) {
+    if (params.accountId !== undefined && record.accountId !== params.accountId) {
       return { ok: false, code: 'ACCOUNT_MISMATCH', message: 'Token account binding mismatch' };
     }
-    if (record.mcpServerId !== params.mcpServerId) {
+    if (params.mcpServerId !== undefined && record.mcpServerId !== params.mcpServerId) {
       return { ok: false, code: 'SERVER_MISMATCH', message: 'Token MCP server binding mismatch' };
     }
     if (record.gatewayId !== params.gatewayId) {

@@ -21,6 +21,7 @@ export type VerifiedAuthorizationResult =
       context: AuthorizationContext;
       agentPublicKeyPem: string;
       invocationId?: string;
+      expiresInMinutes?: number;
     }
   | { ok: false; statusCode: number; code: string; message: string };
 
@@ -669,10 +670,81 @@ export class AamarvaAuthorizationAdapter {
     rawPayload: unknown,
     correlationId: string,
   ): Promise<VerifiedAuthorizationResult> {
+    const isValidPositiveIntegerMinutes = (val: unknown): val is number =>
+      typeof val === 'number' &&
+      Number.isSafeInteger(val) &&
+      val > 0 &&
+      Number.isSafeInteger(val * 60_000) &&
+      !Number.isNaN(new Date(Date.now() + val * 60_000).getTime());
+
     if (rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
-      const rawClaims = (rawPayload as Record<string, unknown>).claims;
-      if (rawClaims && typeof rawClaims === 'object' && !Array.isArray(rawClaims)) {
-        const pem = (rawClaims as Record<string, unknown>).agentPublicKeyPem;
+      const rawObj = rawPayload as Record<string, unknown>;
+      const rawClaims = rawObj.claims;
+      const claimsObj =
+        rawClaims && typeof rawClaims === 'object' && !Array.isArray(rawClaims)
+          ? (rawClaims as Record<string, unknown>)
+          : undefined;
+
+      const topExpires = rawObj.expires_in_minutes;
+      const claimExpires = claimsObj?.expires_in_minutes;
+
+      if (topExpires === undefined) {
+        this.metrics.incSignatureVerificationFailed();
+        return {
+          ok: false,
+          statusCode: 400,
+          code: 'MISSING_EXPIRES_IN_MINUTES',
+          message: 'Missing required top-level expires_in_minutes in token issuance request body',
+        };
+      }
+      if (!isValidPositiveIntegerMinutes(topExpires)) {
+        this.metrics.incSignatureVerificationFailed();
+        return {
+          ok: false,
+          statusCode: 400,
+          code: 'INVALID_EXPIRES_IN_MINUTES',
+          message: 'expires_in_minutes must be a valid positive integer',
+        };
+      }
+      if (claimExpires !== undefined && !isValidPositiveIntegerMinutes(claimExpires)) {
+        this.metrics.incSignatureVerificationFailed();
+        return {
+          ok: false,
+          statusCode: 400,
+          code: 'INVALID_EXPIRES_IN_MINUTES',
+          message: 'expires_in_minutes must be a valid positive integer',
+        };
+      }
+      if (claimExpires !== undefined && topExpires !== claimExpires) {
+        this.metrics.incSignatureVerificationFailed();
+        return {
+          ok: false,
+          statusCode: 400,
+          code: 'INVALID_EXPIRES_IN_MINUTES',
+          message: 'Conflicting expires_in_minutes values between request body and claims',
+        };
+      }
+
+      if (claimsObj) {
+        if (typeof claimsObj.agentId !== 'string' || claimsObj.agentId.trim() === '') {
+          this.metrics.incSignatureVerificationFailed();
+          return {
+            ok: false,
+            statusCode: 400,
+            code: 'MISSING_AGENT_ID',
+            message: 'Missing required agentId in authorization claims',
+          };
+        }
+        if (typeof claimsObj.agentName !== 'string' || claimsObj.agentName.trim() === '') {
+          this.metrics.incSignatureVerificationFailed();
+          return {
+            ok: false,
+            statusCode: 400,
+            code: 'MISSING_AGENT_NAME',
+            message: 'Missing required agentName in authorization claims',
+          };
+        }
+        const pem = claimsObj.agentPublicKeyPem;
         if (typeof pem !== 'string' || pem.trim() === '') {
           this.metrics.incSignatureVerificationFailed();
           return {
@@ -702,7 +774,15 @@ export class AamarvaAuthorizationAdapter {
       };
     }
 
-    const { claims, keyId, signature } = parsed.data;
+    const { claims, keyId, signature, expires_in_minutes: expiresInMinutes } = parsed.data;
+    if (!isValidPositiveIntegerMinutes(expiresInMinutes)) {
+      return {
+        ok: false,
+        statusCode: 400,
+        code: 'INVALID_EXPIRES_IN_MINUTES',
+        message: 'expires_in_minutes must be a valid positive integer',
+      };
+    }
     const authorizationId = claims.authorizationId ?? claims.invocationId!;
     const invocationId = claims.invocationId ?? authorizationId;
     const effectiveMcpServerId = claims.mcpServerId ?? this.mcpServerId;
@@ -916,7 +996,7 @@ export class AamarvaAuthorizationAdapter {
     const context: AuthorizationContext = {
       authorizationId,
       agentId: claims.agentId,
-      agentName: claims.agentName ?? claims.agentId,
+      agentName: claims.agentName,
       accountId: claims.accountId,
       mcpServerId: effectiveMcpServerId,
       gatewayId: claims.gatewayId,
@@ -939,6 +1019,7 @@ export class AamarvaAuthorizationAdapter {
       context,
       agentPublicKeyPem: claims.agentPublicKeyPem,
       invocationId,
+      expiresInMinutes,
     };
   }
 

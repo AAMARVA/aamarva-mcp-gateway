@@ -19,9 +19,9 @@ export type RedeemFailureCode =
 
 export interface AtomicRedeemParams {
   tokenHash: string;
-  agentId: string;
-  accountId: string;
-  mcpServerId: string;
+  agentId?: string;
+  accountId?: string;
+  mcpServerId?: string;
   gatewayId: string;
   expectedAuthorizationId?: string;
   sessionId: string;
@@ -50,6 +50,7 @@ export interface GatewayStateStore {
   ping(): Promise<boolean>;
 
   saveIssuedToken(record: IssuedTokenRecord): Promise<void>;
+  getIssuedTokenByHash(tokenHash: string): Promise<IssuedTokenRecord | null>;
   redeemTokenAtomically(params: AtomicRedeemParams): Promise<AtomicRedeemResult>;
 
   getSession(sessionId: string): Promise<GatewaySession | null>;

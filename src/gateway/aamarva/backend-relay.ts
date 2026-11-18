@@ -173,6 +173,19 @@ export class AamarvaBackendRelay {
       return;
     }
 
+    if (
+      typeof verified.expiresInMinutes !== 'number' ||
+      !Number.isSafeInteger(verified.expiresInMinutes) ||
+      verified.expiresInMinutes <= 0
+    ) {
+      res.status(400).json({
+        error: 'MISSING_EXPIRES_IN_MINUTES',
+        message: 'Missing or invalid expires_in_minutes in token issuance request body',
+        correlationId: ctx.correlationId,
+      });
+      return;
+    }
+
     const gatewayUrlInfo = this.config
       ? resolveGatewayReachableBaseUrl(this.config, req)
       : { baseUrl: null, source: 'unconfigured' as const };
@@ -182,6 +195,7 @@ export class AamarvaBackendRelay {
         context: verified.context,
         agentPublicKeyPem: verified.agentPublicKeyPem,
         correlationId: ctx.correlationId,
+        expiresInMinutes: verified.expiresInMinutes,
         invocationId: verified.invocationId,
         redemptionEndpoint: '/execute',
         gatewayPublicUrl: gatewayUrlInfo.baseUrl,

@@ -1,6 +1,14 @@
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
+
 export interface ProxyHttpResult {
   statusCode: number;
   body: Record<string, unknown>;
+}
+
+function scrubUrlsAndSecrets(msg: string): string {
+  return msg
+    .replace(/https?:\/\/[^\s"'`]+/gi, '[upstream-endpoint]')
+    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [redacted]');
 }
 
 export class ProxyResponseHandler {
@@ -16,6 +24,18 @@ export class ProxyResponseHandler {
   }
 
   upstreamError(err: unknown, correlationId: string): ProxyHttpResult {
+    if (err instanceof McpError) {
+      return {
+        statusCode: err.code === -32602 || err.code === -32601 ? 400 : 502,
+        body: {
+          error: 'MCP_PROTOCOL_ERROR',
+          mcpErrorCode: err.code,
+          message: scrubUrlsAndSecrets(err.message),
+          correlationId,
+        },
+      };
+    }
+
     const rawMessage = err instanceof Error ? err.message : 'Upstream MCP execution failed';
     const isTimeout =
       rawMessage.toLowerCase().includes('timeout') || rawMessage.toLowerCase().includes('abort');

@@ -31,6 +31,7 @@ export interface McpUpstreamAdapter {
   disconnect(): Promise<void>;
   isConnected(): boolean;
   getStatus(): McpUpstreamStatus;
+  ping?(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<void>;
   listTools(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<McpToolDefinition[]>;
   callTool(
     params: { name: string; arguments: Record<string, unknown> },
@@ -164,6 +165,20 @@ export abstract class BaseMcpUpstreamAdapter implements McpUpstreamAdapter {
       throw new Error('Upstream MCP client not connected');
     }
     return this.client;
+  }
+
+  async ping(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<void> {
+    const client = await this.ensureClient();
+    const timeout = options?.timeoutMs ?? this.defaultTimeoutMs;
+    this.activeRequests += 1;
+    try {
+      await client.ping({ timeout, signal: options?.signal });
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : 'MCP ping failed';
+      throw err;
+    } finally {
+      this.activeRequests -= 1;
+    }
   }
 
   async listTools(options?: {

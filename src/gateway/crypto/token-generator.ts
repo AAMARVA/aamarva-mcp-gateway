@@ -18,13 +18,18 @@ export function generateShortLivedToken(
   ttlSeconds: number,
   nowMs = Date.now(),
   maxExpiresAtMs?: number,
+  options?: { allowExtendedTtl?: boolean },
 ): GeneratedToken {
+  const maxTtlSeconds = options?.allowExtendedTtl
+    ? Number.MAX_SAFE_INTEGER
+    : SECURITY_DEFAULTS.MAX_TOKEN_TTL_SECONDS;
   if (
+    !Number.isFinite(ttlSeconds) ||
     ttlSeconds < SECURITY_DEFAULTS.MIN_TOKEN_TTL_SECONDS ||
-    ttlSeconds > SECURITY_DEFAULTS.MAX_TOKEN_TTL_SECONDS
+    ttlSeconds > maxTtlSeconds
   ) {
     throw new Error(
-      `Token TTL ${ttlSeconds}s outside allowed range [${SECURITY_DEFAULTS.MIN_TOKEN_TTL_SECONDS}, ${SECURITY_DEFAULTS.MAX_TOKEN_TTL_SECONDS}]`,
+      `Token TTL ${ttlSeconds}s outside allowed range [${SECURITY_DEFAULTS.MIN_TOKEN_TTL_SECONDS}, ${maxTtlSeconds}]`,
     );
   }
 

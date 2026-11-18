@@ -85,13 +85,13 @@ end
 if nowMs > tonumber(tok.expiresAtMs) then
   return {'ERR', 'TOKEN_EXPIRED', 'Authorization token has expired'}
 end
-if tok.agentId ~= ARGV[2] then
+if ARGV[2] ~= '' and tok.agentId ~= ARGV[2] then
   return {'ERR', 'AGENT_MISMATCH', 'Token agent binding mismatch'}
 end
-if tok.accountId ~= ARGV[3] then
+if ARGV[3] ~= '' and tok.accountId ~= ARGV[3] then
   return {'ERR', 'ACCOUNT_MISMATCH', 'Token account binding mismatch'}
 end
-if tok.mcpServerId ~= ARGV[4] then
+if ARGV[4] ~= '' and tok.mcpServerId ~= ARGV[4] then
   return {'ERR', 'SERVER_MISMATCH', 'Token MCP server binding mismatch'}
 end
 if tok.gatewayId ~= ARGV[5] then
@@ -282,6 +282,12 @@ export class RedisGatewayStateStore implements GatewayStateStore {
     await this.command(['SADD', `agw:acct_toks:${record.accountId}`, record.tokenHash]);
   }
 
+  async getIssuedTokenByHash(tokenHash: string): Promise<IssuedTokenRecord | null> {
+    const raw = (await this.command(['GET', `agw:tok:${tokenHash}`])) as string | null;
+    if (!raw) return null;
+    return JSON.parse(raw) as IssuedTokenRecord;
+  }
+
   async redeemTokenAtomically(params: AtomicRedeemParams): Promise<AtomicRedeemResult> {
     const rawPre = (await this.command(['GET', `agw:tok:${params.tokenHash}`])) as string | null;
     if (!rawPre) {
@@ -303,9 +309,9 @@ export class RedisGatewayStateStore implements GatewayStateStore {
       `agw:outbox_by_sess:${params.sessionId}`,
       'agw:outbox:pending',
       String(params.nowMs),
-      params.agentId,
-      params.accountId,
-      params.mcpServerId,
+      params.agentId ?? '',
+      params.accountId ?? '',
+      params.mcpServerId ?? '',
       params.gatewayId,
       params.sessionId,
       String(params.sessionExpiresAtMs),

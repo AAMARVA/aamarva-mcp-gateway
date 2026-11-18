@@ -4,25 +4,23 @@ The Gateway implements the complete 7-phase authorization workflow faithfully.
 
 ## Phase 1 — Authorization Originates from AAMARVA
 
-1. AAMARVA Core authenticates the agent, evaluates policy (including FLOOR human approval if required), and constructs an authorization grant containing `authorizationId`, `agentId`, `agentName`, `accountId`, `agentPublicKeyPem`, `mcpServerId`, `gatewayId`, `allowedTools`, `issuedAt`, and `expiresAt`.
-2. AAMARVA signs the canonicalized claims object using its private signing key (`ed25519` or `ecdsa-p256-sha256`) and sends `{ claims, keyId, signature }` to `POST /api/v1/aamarva/authorizations/issue-token`.
-3. `AamarvaAuthorizationAdapter` verifies the HMAC backend headers, checks clock skew, verifies the asymmetric signature against `AAMARVA_TRUSTED_SIGNING_KEYS_JSON[keyId]`, and verifies `gatewayId` and `mcpServerId` match this installation.
+1. AAMARVA Core authenticates the agent, evaluates policy (including FLOOR human approval if required), and constructs an authorization grant containing `authorizationId`, `invocationId`, `agentId`, `agentName`, `accountId`, `integrationId`, `agentPublicKeyPem`, `agentPublicKeyFingerprint`, `mcpServerId`, `gatewayId`, `allowedTools`, `issuedAt`, and `expiresAt`.
+2. AAMARVA signs the canonicalized claims object using its private signing key (`ed25519` or `ecdsa-p256-sha256`) and sends `{ claims, keyId, signature, expires_in_minutes }` to `POST /issuetoken`.
+3. `AamarvaAuthorizationAdapter` verifies the HMAC backend headers, validates that top-level `expires_in_minutes` is present and is a positive safe integer (rejecting omissions even if `claims.expires_in_minutes` is set, and rejecting conflicts, with `400 MISSING_EXPIRES_IN_MINUTES` / `400 INVALID_EXPIRES_IN_MINUTES` and no fallback), checks clock skew, verifies the asymmetric signature against `AAMARVA_TRUSTED_SIGNING_KEYS_JSON[keyId]`, and verifies `gatewayId`, P-256 agent key fingerprint, verified connection, and tool scope match this installation.
 
 ## Phase 2 — Short-Lived Token Generation
 
-`generateShortLivedToken` creates an unpredictable 256-bit CSPRNG token (`agw1.tok_<32-hex>.<43-base64url>`) containing no PII or account identifiers. Token expiration is strictly clamped to `Math.min(now + tokenTtlSeconds, authorizationGrant.expiresAt)`; grants with less than `15` seconds remaining validity are rejected (`400 INSUFFICIENT_GRANT_VALIDITY`). Only the token's SHA-256 digest (`tokenHash`) is persisted in the state store along with strict bindings (`agentId`, `accountId`, `mcpServerId`, `gatewayId`, `scope`, `expiresAtMs`, `authorizationExpiresAtMs`).
+`generateShortLivedToken` creates an unpredictable 256-bit CSPRNG token (`agw1.tok_<32-hex>.<43-base64url>`) containing no PII or account identifiers. Token expiration is configured from the supplied `expires_in_minutes` value (`expires_in_minutes * 60` seconds), clamped only to `authorizationGrant.expiresAt`; grants with less than `15` seconds remaining validity are rejected (`400 INSUFFICIENT_GRANT_VALIDITY`). Only the token's SHA-256 digest (`tokenHash`) is persisted in the state store along with strict bindings (`agentId`, `accountId`, `mcpServerId`, `gatewayId`, `scope`, `expiresAtMs`, `authorizationExpiresAtMs`).
 
 ## Phase 3 — Public-Key Envelope Encryption
 
-`encryptTokenForAgent` inspects the agent's verified public key (`crypto.createPublicKey`) and builds an authenticated `AAMARVA-GW-ENV-V1` envelope:
-- **X25519 / P-256**: Ephemeral ECDH + HKDF-SHA256 + AES-256-GCM with AAD binding `(version, algorithm, tokenId, agentId, accountId, mcpServerId, gatewayId, expiresAt)`.
-- **RSA (≥2048-bit)**: RSA-OAEP-SHA256 key wrap + AES-256-GCM with identical AAD.
+`encryptTokenForAgent` inspects the agent's verified P-256 public key (`crypto.createPublicKey`) and builds an authenticated `AAMARVA-GW-ENV-V1` envelope using ephemeral ECDH + HKDF-SHA256 + AES-256-GCM with AAD binding `(version, algorithm, tokenId, agentId, accountId, mcpServerId, gatewayId, expiresAt)`.
 
 Plaintext tokens are never returned to AAMARVA or stored in logs or databases.
 
 ## Phase 4 — Encrypted Token & Gateway Public Key Returned to AAMARVA
 
-Gateway returns HTTP `201` with `{ tokenId, expiresAt, gatewayId, mcpServerId, redemptionEndpoint: "/api/v1/redeem", encryptedToken, gatewayPublicKey, gatewaySignature, correlationId }`.
+Gateway returns HTTP `201` with `{ tokenId, expiresAt, gatewayId, mcpServerId, agentId, accountId, authorizationId, invocationId, redemptionEndpoint: "/execute", encryptionAlgorithm, envelopeVersion, encryptedToken, gatewayKeyId, gatewayPublicKeyFingerprint, gatewayPublicKey, gatewaySignature, correlationId }`.
 - `gatewayPublicKey` carries the Gateway's own asymmetric identity (`keyId`, `algorithm`, `purpose: "gateway-response-signing"`, `encoding: "PEM-SPKI"`, `publicKey`, `fingerprint`), kept strictly separate from the agent's encryption key.
 - `gatewaySignature` signs the canonicalized response envelope using the active Gateway private key.
 

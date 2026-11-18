@@ -263,7 +263,7 @@ describe('Architectural & End-to-End Lifecycle Verification', () => {
       expiresAt: new Date(now + 300_000).toISOString(),
     };
     const grantSig = signPayloadAsMockAamarva(claims, aamarvaKeys.privateKey);
-    const issueBody = { claims, keyId: 'aamarva-k1', signature: grantSig };
+    const issueBody = { claims, keyId: 'aamarva-k1', signature: grantSig, expires_in_minutes: 5 };
     const issueRes = await httpJson(baseUrl, '/issuetoken', {
       headers: signedBackendHeaders('/issuetoken', issueBody),
       body: issueBody,

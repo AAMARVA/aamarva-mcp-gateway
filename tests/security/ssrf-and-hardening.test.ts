@@ -463,6 +463,7 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       claims: grantClaims,
       keyId: 'aamarva-k1',
       signature: signPayloadAsMockAamarva(grantClaims, aamarvaKeys.privateKey),
+      expires_in_minutes: 5,
     };
     const issueRes = await postJson(
       baseUrl,
@@ -719,6 +720,7 @@ describe('Final Security Hardening — SSRF, DNS Rebinding, Redirects, Encrypted
       claims: gClaims,
       keyId: 'aamarva-k1',
       signature: signPayloadAsMockAamarva(gClaims, aamarvaKeys.privateKey),
+      expires_in_minutes: 5,
     };
     const issueRes = await postJson(
       baseUrl,

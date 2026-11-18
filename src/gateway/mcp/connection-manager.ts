@@ -239,6 +239,9 @@ export class McpConnectionManager {
     let discoveredTools: McpToolDefinition[];
     try {
       await adapter.connect();
+      if (adapter.ping) {
+        await adapter.ping({ timeoutMs: this.defaultTimeoutMs });
+      }
       const status = adapter.getStatus();
 
       if (!adapter.isConnected() || !status.connected) {
@@ -294,6 +297,7 @@ export class McpConnectionManager {
             })
           : null;
 
+      const serverCapabilities = status.serverCapabilities ?? {};
       const record: VerifiedMcpConnectionRecord = {
         connectionId,
         attestationId,
@@ -305,6 +309,7 @@ export class McpConnectionManager {
         canonicalEndpoint,
         negotiatedProtocolVersion: status.negotiatedProtocolVersion,
         serverInfo: status.serverInfo,
+        serverCapabilities,
         toolsListHash,
         toolNames: normalizedTools.map((t) => t.name),
         encryptedCredentialsJson,
@@ -341,6 +346,7 @@ export class McpConnectionManager {
         mcpInitialized: true,
         negotiatedProtocolVersion: status.negotiatedProtocolVersion,
         ...(status.serverInfo ? { serverInfo: status.serverInfo } : {}),
+        serverCapabilities,
         toolsDiscoverySuccess: true,
         toolCount: normalizedTools.length,
         toolsListHash,
@@ -372,6 +378,15 @@ export class McpConnectionManager {
 
       return {
         verified: true,
+        protocolVersion: status.negotiatedProtocolVersion,
+        ...(status.serverInfo ? { serverInfo: status.serverInfo } : {}),
+        capabilities: serverCapabilities,
+        serverCapabilities,
+        mcpInitialize: {
+          protocolVersion: status.negotiatedProtocolVersion,
+          ...(status.serverInfo ? { serverInfo: status.serverInfo } : {}),
+          capabilities: serverCapabilities,
+        },
         attestation,
         gatewayPublicKey,
         gatewaySignature: sig.signature,

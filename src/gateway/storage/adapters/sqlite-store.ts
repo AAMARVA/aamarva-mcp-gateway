@@ -295,6 +295,34 @@ export class SqliteGatewayStateStore implements GatewayStateStore {
     );
   }
 
+  async getIssuedTokenByHash(tokenHash: string): Promise<IssuedTokenRecord | null> {
+    const db = this.requireDb();
+    const row = db
+      .prepare('SELECT * FROM issued_tokens WHERE token_hash = ?')
+      .get(tokenHash) as TokenRow | undefined;
+    if (!row) return null;
+    const authExpMs =
+      row.authorization_expires_at_ms > 0 ? row.authorization_expires_at_ms : row.expires_at_ms;
+    return {
+      tokenId: row.token_id,
+      tokenHash: row.token_hash,
+      authorizationId: row.authorization_id,
+      agentId: row.agent_id,
+      agentName: row.agent_name,
+      accountId: row.account_id,
+      mcpServerId: row.mcp_server_id,
+      gatewayId: row.gateway_id,
+      scope: JSON.parse(row.scope_json) as AuthorizationScope,
+      aamarvaKeyId: row.aamarva_key_id,
+      issuedAtMs: row.issued_at_ms,
+      expiresAtMs: row.expires_at_ms,
+      authorizationExpiresAtMs: authExpMs,
+      redeemedAtMs: row.redeemed_at_ms,
+      redeemedBySessionId: row.redeemed_by_session_id,
+      revokedAtMs: row.revoked_at_ms,
+    };
+  }
+
   async redeemTokenAtomically(params: AtomicRedeemParams): Promise<AtomicRedeemResult> {
     const db = this.requireDb();
     db.exec('BEGIN IMMEDIATE;');
@@ -339,17 +367,17 @@ export class SqliteGatewayStateStore implements GatewayStateStore {
         return { ok: false, code: 'TOKEN_EXPIRED', message: 'Authorization token has expired' };
       }
 
-      if (row.agent_id !== params.agentId) {
+      if (params.agentId !== undefined && row.agent_id !== params.agentId) {
         db.exec('ROLLBACK;');
         return { ok: false, code: 'AGENT_MISMATCH', message: 'Token agent binding mismatch' };
       }
 
-      if (row.account_id !== params.accountId) {
+      if (params.accountId !== undefined && row.account_id !== params.accountId) {
         db.exec('ROLLBACK;');
         return { ok: false, code: 'ACCOUNT_MISMATCH', message: 'Token account binding mismatch' };
       }
 
-      if (row.mcp_server_id !== params.mcpServerId) {
+      if (params.mcpServerId !== undefined && row.mcp_server_id !== params.mcpServerId) {
         db.exec('ROLLBACK;');
         return { ok: false, code: 'SERVER_MISMATCH', message: 'Token MCP server binding mismatch' };
       }

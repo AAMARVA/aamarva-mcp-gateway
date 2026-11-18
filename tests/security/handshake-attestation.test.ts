@@ -722,6 +722,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       claims: crossAcctClaims,
       keyId: 'aamarva-k1',
       signature: signPayloadAsMockAamarva(crossAcctClaims, aamarvaKeys.privateKey),
+      expires_in_minutes: 5,
     };
     const crossAcctRes = await postJson(
       baseUrl,
@@ -753,6 +754,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       claims: substGrantClaims,
       keyId: 'aamarva-k1',
       signature: signPayloadAsMockAamarva(substGrantClaims, aamarvaKeys.privateKey),
+      expires_in_minutes: 5,
     };
     const substGrantRes = await postJson(
       baseUrl,
@@ -791,6 +793,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
         claims,
         keyId: 'aamarva-k1',
         signature: signPayloadAsMockAamarva(claims, aamarvaKeys.privateKey),
+        expires_in_minutes: 5,
       };
       const issueRes = await postJson(
         baseUrl,
@@ -1029,6 +1032,7 @@ describe('Mandatory Initial MCP Gateway Handshake & Cryptographic Attestation', 
       claims: unverifiedGrantClaims,
       keyId: 'aamarva-k1',
       signature: signPayloadAsMockAamarva(unverifiedGrantClaims, aamarvaKeys.privateKey),
+      expires_in_minutes: 5,
     };
     const unverifiedGrantRes = await postJson(
       baseUrl,
